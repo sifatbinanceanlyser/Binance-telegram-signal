@@ -1,4 +1,4 @@
- import pandas as pd
+import pandas as pd
 
 class QuotexComplete12MasterBot:
     def __init__(self, df):
