@@ -1,7 +1,6 @@
 pandas
-pandas_ta
-quotexpy
 python-telegram-bot
 flask
 gunicorn
+
 
