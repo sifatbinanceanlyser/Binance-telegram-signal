@@ -1,26 +1,41 @@
 import os
-import asyncio
-import threading
+import time
 import random
+import threading
+import requests
 import pandas as pd
 from flask import Flask
-from telegram import Bot
 from BpSifat import QuotexComplete12MasterBot
 
-# Flask App (Render-এ পিং পাওয়ার জন্য)
 app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "Telegram Test Signal Bot is Active!"
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID", "YOUR_TELEGRAM_CHAT_ID")
+# Render Environment Variables থেকে ডাটা নেবে
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
 
-bot = Bot(token=TELEGRAM_TOKEN)
+def send_telegram_message(text):
+    """মেসেজ পাঠানোর সবচেয়ে সহজ ও নিশ্চিত উপায়"""
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        print("⚠️ TELEGRAM_TOKEN or CHAT_ID missing!")
+        return
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": text,
+        "parse_mode": "Markdown"
+    }
+    try:
+        res = requests.post(url, json=payload)
+        print("Telegram Response:", res.json())
+    except Exception as e:
+        print(f"Failed to send message: {e}")
 
 def generate_dummy_candle_data():
-    """টেস্টিংয়ের জন্য র্যান্ডম ক্যান্ডেল ডাটা জেনারেট করা"""
     open_p = 100.0
     candles = []
     for _ in range(30):
@@ -39,42 +54,34 @@ def generate_dummy_candle_data():
         open_p = close_p
     return pd.DataFrame(candles)
 
-async def start_telegram_signal_loop():
-    print("Telegram Signal Engine Started...")
+def signal_worker():
+    print("🚀 Signal Engine Worker Started Successfully!")
     
+    # ব্যাকগ্রাউন্ড লুপ চালু হওয়ার সাথে সাথে টেস্ট মেসেজ পাঠাবে
+    send_telegram_message("🤖 **Bot Engine Started & Connected!**\nScanning for signals...")
+
     while True:
         try:
-            # ১. টেস্ট ডাটা জেনারেট করা
             df = generate_dummy_candle_data()
-
-            # ২. BpSifat.py-এর ১২টি স্ট্র্যাটেজি রান করা
             master_bot = QuotexComplete12MasterBot(df)
             signal = master_bot.execute_all_strategies()
 
-            # ৩. সিগন্যাল তৈরি হলে টেলিগ্রামে মেসেজ পাঠানো
             if signal and "⏳" not in signal:
                 msg = f"🧪 **TEST SIGNAL DETECTED** 🧪\n\nAsset: EUR/USD (Simulation)\nSignal: {signal}"
-                await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
-                print(f"Sent Signal to Telegram: {signal}")
-                
-                # সিগন্যাল পাঠালে ১ মিনিট অপেক্ষা করবে
-                await asyncio.sleep(60)
+                print(f"Sending Signal: {signal}")
+                send_telegram_message(msg)
+                time.sleep(60) # সিগন্যাল দিলে ১ মিনিট থামবে
 
         except Exception as e:
             print(f"Error in Loop: {e}")
 
-        # প্রতি ৫ সেকেন্ড পর পর নতুন ডাটা চেক করবে
-        await asyncio.sleep(5)
-
-def run_async_loop():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(start_telegram_signal_loop())
-
-# ব্যাকগ্রাউন্ড থ্রেডে ট্রেডিং লুপ রান করা
-threading.Thread(target=run_async_loop, daemon=True).start()
+        time.sleep(5) # প্রতি ৫ সেকেন্ড পর চেক করবে
 
 if __name__ == "__main__":
+    # ব্যাকগ্রাউন্ডে ডাইরেক্ট থ্রেড রান
+    t = threading.Thread(target=signal_worker, daemon=True)
+    t.start()
+    
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
     
