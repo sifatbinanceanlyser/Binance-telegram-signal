@@ -11,7 +11,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Quotex Live Market Signal Bot is Active!"
+    return "Quotex Live Signal & Win/Loss Tracker Bot is Active!"
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
@@ -27,13 +27,6 @@ def send_telegram_message(text):
         print(f"Failed to send message: {e}")
 
 def fetch_quotex_live_candles(symbol="EURUSD=X", interval="1m", period="1d"):
-    """
-    Quotex-এর ফরেক্স ও ক্রিপ্টো পেয়ারের লাইভ ক্যান্ডেল ডাটা আনার ফাংশন।
-    - EUR/USD -> EURUSD=X
-    - GBP/USD -> GBPUSD=X
-    - USD/JPY -> JPY=X
-    - BTC/USD -> BTC-USD
-    """
     try:
         ticker = yf.Ticker(symbol)
         df = ticker.history(period=period, interval=interval)
@@ -41,7 +34,6 @@ def fetch_quotex_live_candles(symbol="EURUSD=X", interval="1m", period="1d"):
         if df.empty:
             return None
 
-        # Column নামগুলো lowercase করা হচ্ছে যাতে BpSifat.py-এর সাথে মেলে
         df = df.rename(columns={
             'Open': 'open',
             'High': 'high',
@@ -50,17 +42,54 @@ def fetch_quotex_live_candles(symbol="EURUSD=X", interval="1m", period="1d"):
             'Volume': 'volume'
         })
         
-        # সর্বশেষ ৩০টি ক্যান্ডেল ডাটা ফিল্টার করা
         return df[['open', 'high', 'low', 'close', 'volume']].tail(30)
     except Exception as e:
         print(f"Error fetching live data for {symbol}: {e}")
         return None
 
+def track_and_send_result(pair_name, yahoo_symbol, signal_type, entry_price):
+    """
+    ১ মিনিট পর মার্কেটের লাইভ প্রাইস চেক করে Win/Loss ফলাফল টেলিগ্রামে জানাবে।
+    """
+    print(f"⏳ Tracking trade for {pair_name}... Entry: {entry_price}")
+    
+    # ১ মিনিটের ট্রেড শেষ হওয়ার জন্য ৬০ সেকেন্ড অপেক্ষা (ক্যান্ডেল ক্লোজ হওয়া পর্যন্ত)
+    time.sleep(60)
+    
+    df = fetch_quotex_live_candles(symbol=yahoo_symbol, interval="1m")
+    if df is None or df.empty:
+        send_telegram_message(f"⚠️ Could not track result for **{pair_name}** (Data delay).")
+        return
+
+    exit_price = df['close'].iloc[-1]
+    
+    # Win / Loss লজিক ক্যালকুলেশন
+    result = "DRAW 🟡"
+    if "CALL" in signal_type or "BUY" in signal_type or "UP" in signal_type:
+        if exit_price > entry_price:
+            result = "WIN ✅"
+        elif exit_price < entry_price:
+            result = "LOSS ❌"
+    elif "PUT" in signal_type or "SELL" in signal_type or "DOWN" in signal_type:
+        if exit_price < entry_price:
+            result = "WIN ✅"
+        elif exit_price > entry_price:
+            result = "LOSS ❌"
+
+    result_msg = (
+        f"📊 **TRADE RESULT [{pair_name}]**\n\n"
+        f"📍 Entry Price: `{entry_price:.5f}`\n"
+        f"🏁 Exit Price: `{exit_price:.5f}`\n\n"
+        f"🏆 Outcome: **{result}**"
+    )
+    
+    send_telegram_message(result_msg)
+    print(f"Result Sent: {result} for {pair_name}")
+
 def signal_worker():
     print("🚀 Quotex Live Signal Engine Started!")
-    send_telegram_message("📡 **Quotex Live Market Engine Connected!**\nScanning Forex & Crypto signals...")
+    send_telegram_message("📡 **Quotex Live Engine Connected!**\nAuto Win/Loss Tracker Enabled ✅")
 
-    # Quotex-এ সবচেয়ে বেশি চলা কিছু জনপ্রিয় পেয়ারের তালিকা
     ASSETS = {
         "EUR/USD": "EURUSD=X",
         "GBP/USD": "GBPUSD=X",
@@ -71,7 +100,6 @@ def signal_worker():
     while True:
         for pair_name, yahoo_symbol in ASSETS.items():
             try:
-                # লাইভ মার্কেট ডাটা ফ্যাচ করা (১ মিনিটের ক্যান্ডেল)
                 df = fetch_quotex_live_candles(symbol=yahoo_symbol, interval="1m")
 
                 if df is not None and not df.empty:
@@ -79,15 +107,31 @@ def signal_worker():
                     signal = master_bot.execute_all_strategies()
 
                     if signal and "⏳" not in signal:
-                        msg = f"📊 **QUOTEX LIVE SIGNAL** 📊\n\nAsset: {pair_name}\nTimeframe: 1M\nSignal: {signal}"
-                        print(f"Signal Found [{pair_name}]: {signal}")
+                        entry_price = df['close'].iloc[-1]
+                        
+                        msg = (
+                            f"📊 **QUOTEX LIVE SIGNAL** 📊\n\n"
+                            f"Asset: **{pair_name}**\n"
+                            f"Timeframe: **1M**\n"
+                            f"Entry Price: `{entry_price:.5f}`\n"
+                            f"Signal: {signal}\n\n"
+                            f"⏳ *Tracking result in 1 minute...*"
+                        )
                         send_telegram_message(msg)
-                        time.sleep(30) # সিগন্যাল পেলে ৩০ সেকেন্ড পজ
+
+                        # ফলাফল ট্র্যাকিংয়ের জন্য আলাদা থ্রেড চালানো (যাতে স্ক্যান আটকে না থাকে)
+                        tracker_thread = threading.Thread(
+                            target=track_and_send_result,
+                            args=(pair_name, yahoo_symbol, signal, entry_price)
+                        )
+                        tracker_thread.start()
+
+                        time.sleep(15) # রিপিটেড সিগন্যাল এড়াতে গ্যাপ
 
             except Exception as e:
                 print(f"Error analyzing {pair_name}: {e}")
 
-            time.sleep(2) # প্রতি পেয়ার চেকে ২ সেকেন্ড গ্যাপ
+            time.sleep(2)
 
         time.sleep(5)
 
@@ -97,4 +141,4 @@ if __name__ == "__main__":
     
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-                    
+    
