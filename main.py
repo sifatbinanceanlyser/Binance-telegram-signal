@@ -2,7 +2,6 @@ import os
 import time
 import threading
 from datetime import datetime, timezone
-
 import requests
 from flask import Flask, jsonify
 
@@ -10,239 +9,187 @@ BINANCE_BASE = "https://api.binance.com"
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
-# Educational signal bot only:
-# - Uses public Binance market data.
-# - Does NOT place orders.
-# - Does NOT use Binance trading API keys.
-# - Does NOT use leverage.
 SYMBOLS = [
-    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT",
-    "XRPUSDT", "ADAUSDT", "DOGEUSDT", "AVAXUSDT"
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "AVAXUSDT",
+    "DOTUSDT", "LINKUSDT", "MATICUSDT", "NEARUSDT", "LTCUSDT", "SHIBUSDT", "TRXUSDT", "BCHUSDT",
+    "ATOMUSDT", "UNIUSDT", "APTUSDT", "FILUSDT", "ETCUSDT", "XLMUSDT", "INJUSDT", "OPUSDT",
+    "ARBUSDT", "TIAUSDT", "SUIUSDT", "SEIUSDT", "FETUSDT", "RNDRUSDT", "PEPEUSDT", "FLOKIUSDT",
+    "WIFUSDT", "BONKUSDT", "ORDIUSDT", "GALAUSDT", "STXUSDT", "AAVEUSDT", "MKRUSDT", "SANDUSDT",
+    "MANAUSDT", "AXSUSDT", "DYDXUSDT", "CRVUSDT", "LDOUSDT", "EGLDUSDT", "FTMUSDT", "THETAUSDT",
+    "KASUSDT", "RUNEUSDT"
 ]
+
 INTERVAL = "15m"
-LIMIT = 120
+LIMIT = 100
 SCAN_SECONDS = 15 * 60
 
-
 app = Flask(__name__)
-
 
 @app.get("/")
 def health():
     return jsonify({
         "status": "ok",
-        "bot": "Binance Telegram Educational Signal Bot",
+        "bot": "Binance 50 Coins Scanner Bot",
         "time": datetime.now(timezone.utc).isoformat()
     })
-
 
 def get_klines(symbol):
     r = requests.get(
         f"{BINANCE_BASE}/api/v3/klines",
         params={"symbol": symbol, "interval": INTERVAL, "limit": LIMIT},
-        timeout=20,
+        timeout=15,
     )
     r.raise_for_status()
     return r.json()
 
+def parse_klines(klines):
+    highs = [float(row[2]) for row in klines]
+    lows = [float(row[3]) for row in klines]
+    closes = [float(row[4]) for row in klines]
+    return highs, lows, closes
 
-def closes_from_klines(klines):
-    return [float(row[4]) for row in klines]
-
-
-def ema(values, period):
+def calculate_ema(values, period):
     if len(values) < period:
         return None
     k = 2 / (period + 1)
-    value = sum(values[:period]) / period
-    for price in values[period:]:
-        value = price * k + value * (1 - k)
-    return value
+    val = sum(values[:period]) / period
+    for p in values[period:]:
+        val = p * k + val * (1 - k)
+    return val
 
+def calculate_rsi(closes, period=14):
+    if len(closes) <= period:
+        return None
+    gains, losses = [], []
+    for i in range(1, len(closes)):
+        diff = closes[i] - closes[i - 1]
+        gains.append(max(diff, 0))
+        losses.append(max(-diff, 0))
+    avg_g = sum(gains[:period]) / period
+    avg_l = sum(losses[:period]) / period
+    for i in range(period, len(gains)):
+        avg_g = ((avg_g * (period - 1)) + gains[i]) / period
+        avg_l = ((avg_l * (period - 1)) + losses[i]) / period
+    if avg_l == 0:
+        return 100.0
+    return 100 - (100 / (1 + (avg_g / avg_l)))
 
-def rsi(values, period=14):
-    if len(values) <= period:
+def calculate_atr(highs, lows, closes, period=14):
+    if len(closes) <= period:
+        return None
+    tr_list = []
+    for i in range(1, len(closes)):
+        tr = max(
+            highs[i] - lows[i],
+            abs(highs[i] - closes[i - 1]),
+            abs(lows[i] - closes[i - 1])
+        )
+        tr_list.append(tr)
+    return sum(tr_list[-period:]) / period
+
+def analyze_symbol(symbol):
+    klines = get_klines(symbol)
+    highs, lows, closes = parse_klines(klines)
+
+    ema_50 = calculate_ema(closes, 50)
+    rsi_val = calculate_rsi(closes)
+    atr_val = calculate_atr(highs, lows, closes)
+
+    if None in (ema_50, rsi_val, atr_val):
         return None
 
-    gains = []
-    losses = []
-    for i in range(1, len(values)):
-        change = values[i] - values[i - 1]
-        gains.append(max(change, 0))
-        losses.append(max(-change, 0))
+    current_price = closes[-1]
+    signal_type = None
 
-    avg_gain = sum(gains[:period]) / period
-    avg_loss = sum(losses[:period]) / period
+    if current_price > ema_50 and rsi_val < 42:
+        signal_type = "LONG"
+    elif current_price < ema_50 and rsi_val > 58:
+        signal_type = "SHORT"
 
-    for i in range(period, len(gains)):
-        avg_gain = ((avg_gain * (period - 1)) + gains[i]) / period
-        avg_loss = ((avg_loss * (period - 1)) + losses[i]) / period
+    if not signal_type:
+        return None
 
-    if avg_loss == 0:
-        return 100.0
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
-
-
-def macd(values):
-    if len(values) < 35:
-        return None, None
-    fast = ema(values, 12)
-    slow = ema(values, 26)
-    if fast is None or slow is None:
-        return None, None
-    # For a lightweight first version, compare the current MACD value
-    # with the previous approximate MACD value.
-    prev = values[:-1]
-    pfast = ema(prev, 12)
-    pslow = ema(prev, 26)
-    if pfast is None or pslow is None:
-        return fast - slow, None
-    current = fast - slow
-    previous = pfast - pslow
-    return current, previous
-
-
-def strategy_ema(values):
-    e9 = ema(values, 9)
-    e21 = ema(values, 21)
-    if e9 is None or e21 is None:
-        return "NEUTRAL"
-    if e9 > e21:
-        return "BULLISH"
-    if e9 < e21:
-        return "BEARISH"
-    return "NEUTRAL"
-
-
-def strategy_rsi(values):
-    value = rsi(values, 14)
-    if value is None:
-        return "NEUTRAL"
-    if value >= 55:
-        return "BULLISH"
-    if value <= 45:
-        return "BEARISH"
-    return "NEUTRAL"
-
-
-def strategy_macd(values):
-    current, previous = macd(values)
-    if current is None:
-        return "NEUTRAL"
-    if previous is not None and current > previous and current > 0:
-        return "BULLISH"
-    if previous is not None and current < previous and current < 0:
-        return "BEARISH"
-    return "NEUTRAL"
-
-
-def strategy_breakout(values, lookback=20):
-    if len(values) <= lookback:
-        return "NEUTRAL"
-    recent = values[-lookback - 1:-1]
-    last = values[-1]
-    high = max(recent)
-    low = min(recent)
-    if last > high:
-        return "BULLISH"
-    if last < low:
-        return "BEARISH"
-    return "NEUTRAL"
-
-
-def analyze(symbol):
-    klines = get_klines(symbol)
-    closes = closes_from_klines(klines)
-
-    results = {
-        "EMA Trend": strategy_ema(closes),
-        "RSI": strategy_rsi(closes),
-        "MACD": strategy_macd(closes),
-        "Breakout": strategy_breakout(closes),
-    }
-
-    bullish = sum(v == "BULLISH" for v in results.values())
-    bearish = sum(v == "BEARISH" for v in results.values())
-
-    if bullish >= 3:
-        overall = "BULLISH"
-    elif bearish >= 3:
-        overall = "BEARISH"
+    if signal_type == "LONG":
+        entry = current_price
+        sl = entry - (atr_val * 1.5)
+        tp1 = entry + (atr_val * 1.0)
+        tp2 = entry + (atr_val * 2.0)
+        tp3 = entry + (atr_val * 3.2)
     else:
-        overall = "NEUTRAL"
+        entry = current_price
+        sl = entry + (atr_val * 1.5)
+        tp1 = entry - (atr_val * 1.0)
+        tp2 = entry - (atr_val * 2.0)
+        tp3 = entry - (atr_val * 3.2)
+
+    clean_coin = symbol.replace("USDT", "")
 
     return {
-        "symbol": symbol,
-        "price": closes[-1],
-        "strategies": results,
-        "bullish": bullish,
-        "bearish": bearish,
-        "overall": overall,
+        "coin": clean_coin,
+        "signal": signal_type,
+        "leverage": 20,
+        "entry": entry,
+        "tp1": tp1,
+        "tp2": tp2,
+        "tp3": tp3,
+        "sl": sl
     }
 
+def format_telegram_message(data):
+    coin_tag = f"#{data['coin']}/USDT"
+    return f"""🟢 {coin_tag}
+
+📊 Signal: {data['signal']} Leverage: Cross {data['leverage']}X
+
+⚡ Entry Zone: {data['entry']:.6g}
+
+🎯 Take Profit:
+1️⃣ TP1: {data['tp1']:.6g}
+2️⃣ TP2: {data['tp2']:.6g}
+3️⃣ TP3: {data['tp3']:.6g}
+
+⛔ Stop Loss: {data['sl']:.6g}
+
+✅ Trailing Stop: Move SL to Breakeven after TP1 is hit.
+
+📢 Trade Smart • Follow Risk"""
 
 def telegram_send(text):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Telegram variables are not configured.")
-        print(text)
+        print("Telegram configuration missing.")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    r = requests.post(
-        url,
-        data={"chat_id": TELEGRAM_CHAT_ID, "text": text},
-        timeout=20,
-    )
-    r.raise_for_status()
-
-
-def format_signal(result):
-    lines = [
-        "📊 Educational Market Signal",
-        f"Coin: {result['symbol']}",
-        f"Timeframe: {INTERVAL}",
-        f"Price: {result['price']:.8g}",
-        "",
-        "Strategy results:",
-    ]
-
-    for name, value in result["strategies"].items():
-        emoji = "🟢" if value == "BULLISH" else "🔴" if value == "BEARISH" else "⚪"
-        lines.append(f"{emoji} {name}: {value}")
-
-    lines += [
-        "",
-        f"Overall: {result['overall']}",
-        f"Confirmation: {result['bullish']} bullish / {result['bearish']} bearish",
-        "",
-        "⚠️ Educational signal only — no trade/order is executed.",
-    ]
-    return "\n".join(lines)
-
+    try:
+        r = requests.post(
+            url,
+            data={"chat_id": TELEGRAM_CHAT_ID, "text": text},
+            timeout=15,
+        )
+        r.raise_for_status()
+    except Exception as e:
+        print(f"Telegram Send Error: {e}")
 
 def scanner_loop():
-    print("Signal scanner started.")
+    print("Futures 50 Coins Scanner Started...")
     while True:
         try:
             for symbol in SYMBOLS:
                 try:
-                    result = analyze(symbol)
-                    print(result)
-
-                    # Only send a Telegram message when at least 3 strategies agree.
-                    if result["overall"] in ("BULLISH", "BEARISH"):
-                        telegram_send(format_signal(result))
-
+                    res = analyze_symbol(symbol)
+                    if res:
+                        msg = format_telegram_message(res)
+                        telegram_send(msg)
+                        print(f"Signal Generated for {symbol}")
+                    time.sleep(0.5)
                 except Exception as exc:
-                    print(f"{symbol} error: {exc}")
+                    print(f"Error analyzing {symbol}: {exc}")
 
             time.sleep(SCAN_SECONDS)
 
         except Exception as exc:
-            print(f"Scanner loop error: {exc}")
+            print(f"Scanner Loop Error: {exc}")
             time.sleep(30)
-
 
 if __name__ == "__main__":
     thread = threading.Thread(target=scanner_loop, daemon=True)
