@@ -1,6 +1,4 @@
 pandas
-python-telegram-bot
 flask
+requests
 gunicorn
-
-
