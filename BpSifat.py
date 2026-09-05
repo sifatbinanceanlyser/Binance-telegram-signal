@@ -1,5 +1,4 @@
-import pandas as pd
-import pandas_ta as ta
+ import pandas as pd
 
 class QuotexComplete12MasterBot:
     def __init__(self, df):
@@ -9,13 +8,21 @@ class QuotexComplete12MasterBot:
         self.df = df.copy()
 
     def calculate_stochastic_k(self):
+        """
+        pandas_ta ছাড়াই টেক্সট বুক ফর্মুলায় Stochastic Oscillator (%K) হিসাব করার লজিক
+        """
         try:
-            stoch = ta.stoch(self.df['high'], self.df['low'], self.df['close'], k=14, d=3)
-            if stoch is not None and not stoch.empty:
-                return stoch.iloc[-1]['STOCHk_14_3_3']
+            if len(self.df) >= 14:
+                low_14 = self.df['low'].tail(14).min()
+                high_14 = self.df['high'].tail(14).max()
+                close_curr = self.df['close'].iloc[-1]
+                
+                if high_14 != low_14:
+                    stoch_k = ((close_curr - low_14) / (high_14 - low_14)) * 100
+                    return stoch_k
         except Exception:
             pass
-        return 50
+        return 50  # ডিফল্ট নিরাপদ মান
 
     # =========================================================================
     # STRATEGY 1: Pattern 1 Buy Setup (Back-to-Back Red Level Breakout)
@@ -275,3 +282,4 @@ if __name__ == "__main__":
     print("----------------------------------------------------------")
     print("SIGNAL:", trade_signal)
     print("----------------------------------------------------------")
+       
