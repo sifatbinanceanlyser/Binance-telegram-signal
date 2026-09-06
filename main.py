@@ -8,7 +8,7 @@ import ta
 from flask import Flask
 
 # --- Telegram Credentials ---
-TELEGRAM_BOT_TOKEN = "8837833880:8447772474:AAF_CwpS1e3clYMEkuN0VZ6UTFqzTsnK2KE"
+TELEGRAM_BOT_TOKEN = "8447772474:AAF_CwpS1e3clYMEkuN0VZ6UTFqzTsnK2KE"
 TELEGRAM_CHAT_ID = "6885238220"
 
 active_trades = {}
