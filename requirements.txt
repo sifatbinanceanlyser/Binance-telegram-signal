@@ -1,4 +1,4 @@
+ccxt
 pandas
-flask
+ta
 requests
-gunicorn
