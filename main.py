@@ -8,14 +8,12 @@ from BpSifat import QuotexComplete12MasterBot
 
 app = Flask(__name__)
 
-# Environment Variables থেকে ক্রেডেনশিয়াল নেওয়া
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
-TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY")
 
 @app.route('/')
 def home():
-    return "Quotex Live Signal & Win/Loss Tracker Engine Active!"
+    return "Binance Live Signal & Win/Loss Tracker Engine Active!"
 
 def send_telegram_message(text):
     if not TELEGRAM_TOKEN or not CHAT_ID:
@@ -27,89 +25,92 @@ def send_telegram_message(text):
     except Exception as e:
         print(f"Failed to send message: {e}")
 
-def fetch_quotex_live_candles(symbol="EUR/USD", interval="1min"):
-    """Twelve Data API থেকে সরাসরি লাইভ ক্যান্ডেল ডাটা ফেচ করা"""
-    if not TWELVE_DATA_API_KEY:
-        print("Error: TWELVE_DATA_API_KEY Environment Variable missing!")
-        return None
-
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={interval}&outputsize=30&apikey={TWELVE_DATA_API_KEY}"
+def fetch_binance_live_candles(symbol="BTCUSDT", interval="1m", limit=30):
+    """Binance API থেকে রিয়েল-টাইম ক্যান্ডেল ডাটা নিয়ে আসা (কোনো API Key ছাড়াই কাজ করবে)"""
+    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=5)
         data = response.json()
         
-        if "values" not in data:
-            print(f"API Error [{symbol}]: {data.get('message', 'Unknown error')}")
+        if isinstance(data, dict) and "code" in data:
+            print(f"Binance API Error [{symbol}]: {data.get('msg')}")
             return None
 
         candles = []
-        for c in reversed(data["values"]):
+        for c in data:
             candles.append({
-                'open': float(c['open']),
-                'high': float(c['high']),
-                'low': float(c['low']),
-                'close': float(c['close']),
-                'volume': float(c.get('volume', 0))
+                'open': float(c[1]),
+                'high': float(c[2]),
+                'low': float(c[3]),
+                'close': float(c[4]),
+                'volume': float(c[5])
             })
         return pd.DataFrame(candles)
     except Exception as e:
-        print(f"Error fetching live data for {symbol}: {e}")
+        print(f"Error fetching Binance data for {symbol}: {e}")
         return None
 
-def track_and_send_result(pair_name, signal_type, entry_price):
-    """১ মিনিট অপেক্ষা করে ক্যান্ডেল ক্লোজ হওয়ার পর সঠিক Exit Price দিয়ে Win/Loss ক্যালকুলেট করা"""
+def track_and_send_result(pair_name, binance_symbol, signal_type, entry_price):
+    """১ মিনিট অপেক্ষা করে Binance প্রাইস চেক করে Win/Loss রেজাল্ট পাঠানো"""
     print(f"⏳ Tracking trade for {pair_name}... Entry: {entry_price}")
     
-    # ১ মিনিটের ট্রেড ডিউরেশনের জন্য ৬০ সেকেন্ড বিরতি
+    # ১ মিনিটের ক্যান্ডেল ক্লোজ হওয়া পর্যন্ত ৬০ সেকেন্ড অপেক্ষা
     time.sleep(60)
     
-    df = fetch_quotex_live_candles(symbol=pair_name, interval="1min")
+    df = fetch_binance_live_candles(symbol=binance_symbol, interval="1m")
     if df is None or df.empty:
-        send_telegram_message(f"⚠️ Result tracking failed for **{pair_name}** (API Timeout).")
+        send_telegram_message(f"⚠️ Could not track result for **{pair_name}**.")
         return
 
     exit_price = df['close'].iloc[-1]
-
+    
     # Win / Loss ক্যালকুলেশন
     result = "DRAW 🟡"
-    if "CALL" in signal_type or "BUY" in signal_type or "UP" in signal_type:
+    signal_upper = signal_type.upper()
+    
+    if "CALL" in signal_upper or "BUY" in signal_upper or "UP" in signal_upper:
         if exit_price > entry_price:
             result = "WIN ✅"
         elif exit_price < entry_price:
             result = "LOSS ❌"
-    elif "PUT" in signal_type or "SELL" in signal_type or "DOWN" in signal_type:
+    elif "PUT" in signal_upper or "SELL" in signal_upper or "DOWN" in signal_upper:
         if exit_price < entry_price:
             result = "WIN ✅"
         elif exit_price > entry_price:
             result = "LOSS ❌"
 
     result_msg = (
-        f"📊 **QUOTEX TRADE RESULT [{pair_name}]**\n\n"
-        f"📍 Entry Price: `{entry_price:.5f}`\n"
-        f"🏁 Exit Price: `{exit_price:.5f}`\n\n"
+        f"📊 **BINANCE TRADE RESULT [{pair_name}]**\n\n"
+        f"📍 Entry Price: `{entry_price:.2f}`\n"
+        f"🏁 Exit Price: `{exit_price:.2f}`\n\n"
         f"🏆 Outcome: **{result}**"
     )
     
     send_telegram_message(result_msg)
 
 def signal_worker():
-    print("🚀 Quotex Real-Time Signal Engine Started!")
-    send_telegram_message("📡 **Quotex Live Engine Connected!**\nTwelve Data Live Market & Auto Win/Loss Active ✅")
+    print("🚀 Binance Live Signal Engine Started!")
+    send_telegram_message("📡 **Binance Engine Connected!**\nReal-Time Crypto Signals Active ✅")
 
-    # ১২ ডাটার সঠিক ফরেক্স পেয়ার সিম্বলসমূহ
-    PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD"]
+    # Binance-এর ক্রিপ্টো পেয়ার তালিকা
+    PAIRS = {
+        "BTC/USDT": "BTCUSDT",
+        "ETH/USDT": "ETHUSDT",
+        "SOL/USDT": "SOLUSDT"
+    }
+    
     last_signal_time = {}
 
     while True:
         current_time = time.time()
 
-        for pair in PAIRS:
-            # একই পেয়ারে ২ মিনিটের আগে বারবার সিগন্যাল যাওয়া রদ করার ফিল্টার
-            if pair in last_signal_time and (current_time - last_signal_time[pair]) < 120:
+        for pair_name, binance_symbol in PAIRS.items():
+            # একই পেয়ারে বারবার সিগন্যাল যাওয়া বন্ধ করতে ২ মিনিটের কুলডাউন
+            if pair_name in last_signal_time and (current_time - last_signal_time[pair_name]) < 120:
                 continue
 
             try:
-                df = fetch_quotex_live_candles(symbol=pair, interval="1min")
+                df = fetch_binance_live_candles(symbol=binance_symbol, interval="1m")
 
                 if df is not None and not df.empty:
                     master_bot = QuotexComplete12MasterBot(df)
@@ -117,31 +118,31 @@ def signal_worker():
 
                     if signal and "⏳" not in signal:
                         entry_price = df['close'].iloc[-1]
-                        last_signal_time[pair] = current_time
+                        last_signal_time[pair_name] = current_time
 
                         msg = (
-                            f"📊 **QUOTEX LIVE SIGNAL** 📊\n\n"
-                            f"Asset: **{pair}**\n"
+                            f"📊 **BINANCE LIVE SIGNAL** 📊\n\n"
+                            f"Asset: **{pair_name}**\n"
                             f"Timeframe: **1M**\n"
-                            f"Entry Price: `{entry_price:.5f}`\n"
+                            f"Entry Price: `{entry_price:.2f}`\n"
                             f"Signal: {signal}\n\n"
                             f"⏳ *Tracking result in 1 minute...*"
                         )
                         send_telegram_message(msg)
 
-                        # ব্যাকগ্রাউন্ডে রেজাল্ট ট্র্যাকার চালনা
+                        # থ্রেডের মাধ্যমে ব্যাকগ্রাউন্ডে রেজাল্ট ট্র্যাক করা
                         tracker_thread = threading.Thread(
                             target=track_and_send_result,
-                            args=(pair, signal, entry_price)
+                            args=(pair_name, binance_symbol, signal, entry_price)
                         )
                         tracker_thread.start()
 
             except Exception as e:
-                print(f"Error analyzing {pair}: {e}")
+                print(f"Error analyzing {pair_name}: {e}")
 
-            time.sleep(8) # Twelve Data API Rate Limit (8 requests/min) বজায় রাখতে ডিলে
+            time.sleep(2)
 
-        time.sleep(10)
+        time.sleep(5)
 
 if __name__ == "__main__":
     t = threading.Thread(target=signal_worker, daemon=True)
@@ -149,4 +150,4 @@ if __name__ == "__main__":
     
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-    
+                
