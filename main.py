@@ -38,7 +38,8 @@ def fetch_and_analyze():
     exchange = ccxt.binance({'enableRateLimit': True})
     try:
         markets = exchange.load_markets()
-        symbols = [s for s in markets if s.endswith('/USDT') and markets[s]['swap']][:20]
+        # ২০টি কয়েনের জায়গায় ৫০টি কয়েন স্ক্যান করার জন্য ফিল্টার অপটিমাইজ করা হলো
+        symbols = [s for s in markets if s.endswith('/USDT') and markets[s].get('swap', False)][:50]
         
         for symbol in symbols:
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=100)
