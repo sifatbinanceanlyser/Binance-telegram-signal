@@ -4,7 +4,7 @@ import ccxt
 import pandas as pd
 import ta
 
-# Telegram Credentials (Get from Telegram BotFather)
+# Telegram Credentials
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID_HERE")
 
@@ -17,7 +17,7 @@ def send_telegram_msg(message):
         except Exception as e:
             print(f"Telegram alert error: {e}")
 
-# Initialize Binance Futures Client via CCXT
+# Initialize Binance Futures Client
 exchange = ccxt.binance({
     'options': {'defaultType': 'future'},
     'enableRateLimit': True
@@ -26,47 +26,64 @@ exchange = ccxt.binance({
 def scan_market():
     print("Fetching top 50 USDT Futures pairs...")
     markets = exchange.fetch_markets()
-    
-    # Filter top 50 USDT Pairs
     usdt_pairs = [m['symbol'] for m in markets if m['quote'] == 'USDT' and m['active']]
     top_50_pairs = usdt_pairs[:50]
-    
-    signals = []
 
     for symbol in top_50_pairs:
         try:
-            # Fetch last 100 candles (15-minute timeframe)
+            # 15 Minute timeframe data
             bars = exchange.fetch_ohlcv(symbol, timeframe='15m', limit=100)
             df = pd.DataFrame(bars, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
             
-            # Calculate Indicators (RSI & EMA)
             df['rsi'] = ta.momentum.rsi(df['close'], window=14)
             df['ema20'] = ta.trend.ema_indicator(df['close'], window=20)
             
             last_rsi = round(df['rsi'].iloc[-1], 2)
-            last_close = df['close'].iloc[-1]
+            entry_price = df['close'].iloc[-1]
             last_ema = df['ema20'].iloc[-1]
-            volume_spike = df['volume'].iloc[-1] > (df['volume'].mean() * 2)
+            
+            # Previous candle for tracking outcome
+            prev_high = df['high'].iloc[-1]
+            prev_low = df['low'].iloc[-1]
 
-            # Signal Logic
-            if last_rsi < 30 and last_close > last_ema:
-                msg = f"🟢 **BULLISH SIGNAL**: `{symbol}`\nPrice: {last_close}\nRSI: {last_rsi} (Oversold Bounce)"
-                signals.append(msg)
+            # LONG (UP) SIGNAL
+            if last_rsi < 30 and entry_price > last_ema:
+                tp = round(entry_price * 1.015, 4)  # 1.5% Target Profit
+                sl = round(entry_price * 0.99, 4)    # 1.0% Stop Loss
                 
-            elif last_rsi > 70 and last_close < last_ema:
-                msg = f"🔴 **BEARISH SIGNAL**: `{symbol}`\nPrice: {last_close}\nRSI: {last_rsi} (Overbought Drop)"
-                signals.append(msg)
+                # Simple tracking logic based on candle move
+                status = "🟢 WIN" if prev_high >= tp else ("🔴 LOSS" if prev_low <= sl else "⏳ PENDING")
+
+                msg = (
+                    f"🟢 **SIGNAL: LONG (UP)** | `{symbol}`\n\n"
+                    f"🔹 **Entry Price:** `{entry_price}`\n"
+                    f"🎯 **Target (TP):** `{tp}`\n"
+                    f"🛑 **Stop Loss (SL):** `{sl}`\n"
+                    f"📊 **RSI:** `{last_rsi}`\n\n"
+                    f"🏆 **Status:** {status}"
+                )
+                send_telegram_msg(msg)
+                
+            # SHORT (DOWN) SIGNAL
+            elif last_rsi > 70 and entry_price < last_ema:
+                tp = round(entry_price * 0.985, 4) # 1.5% Target Profit
+                sl = round(entry_price * 1.01, 4)   # 1.0% Stop Loss
+                
+                status = "🟢 WIN" if prev_low <= tp else ("🔴 LOSS" if prev_high >= sl else "⏳ PENDING")
+
+                msg = (
+                    f"🔴 **SIGNAL: SHORT (DOWN)** | `{symbol}`\n\n"
+                    f"🔹 **Entry Price:** `{entry_price}`\n"
+                    f"🎯 **Target (TP):** `{tp}`\n"
+                    f"🛑 **Stop Loss (SL):** `{sl}`\n"
+                    f"📊 **RSI:** `{last_rsi}`\n\n"
+                    f"🏆 **Status:** {status}"
+                )
+                send_telegram_msg(msg)
 
         except Exception as e:
             continue
 
-    if signals:
-        full_report = "🚀 **Binance 50 Coin Scanner Report** 🚀\n\n" + "\n\n".join(signals)
-        print(full_report)
-        send_telegram_msg(full_report)
-    else:
-        print("No strong signals found right now.")
-
 if __name__ == "__main__":
     scan_market()
-    
+                
