@@ -1,4 +1,16 @@
-import os
+# --- Telegram Credentials (সরাসরি বসিয়ে দিন) ---
+TELEGRAM_BOT_TOKEN = "8837833880:AAG7S5tpFiQ2WBwFZRBT5oZFlrQ9HI_yzrQ"
+TELEGRAM_CHAT_ID = "6885238220"
+
+def send_telegram_msg(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    try:
+        res = requests.post(url, json=payload)
+        print(f"Telegram Response: {res.text}")
+    except Exception as e:
+        print(f"Telegram error: {e}")
+        import os
 import time
 import threading
 import requests
