@@ -6,157 +6,107 @@ import ccxt
 import pandas as pd
 import ta
 from flask import Flask
-# --- Telegram Credentials (সরাসরি বসিয়ে দিন) ---
-TELEGRAM_BOT_TOKEN = "8837833880:AAG7S5tpFiQ2WBwFZRBT5oZFlrQ9HI_yzrQ"
-TELEGRAM_CHAT_ID = "6885238220"
+
+# --- Telegram Credentials ---
+TELEGRAM_BOT_TOKEN = "8837833880:AAG7S5tpFiQ2..."  # আপনার টোকেন
+TELEGRAM_CHAT_ID = "6885238220"                    # আপনার চ্যাট আইডি
+
+active_trades = {}
 
 def send_telegram_msg(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
-        res = requests.post(url, json=payload)
-        print(f"Telegram Response: {res.text}")
+        res = requests.post(url, json=payload, timeout=10)
+        print(f"--> Telegram Status: {res.status_code} | Response: {res.text}")
     except Exception as e:
-        print(f"Telegram error: {e}")
-# --- Render Keep-Alive Flask Server ---
+        print(f"--> Telegram Error: {e}")
+
+# --- Keep-Alive Web Server ---
 app = Flask('')
 
 @app.route('/')
 def home():
     return "Bot is active & scanning every 5 minutes!"
 
-def run_web():
-    port = int(os.getenv("PORT", 8080))
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-threading.Thread(target=run_web, daemon=True).start()
-
-# --- Credentials ---
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID_HERE")
-
-def send_telegram_msg(message):
-    if TELEGRAM_BOT_TOKEN != "YOUR_BOT_TOKEN_HERE":
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
-        try:
-            requests.post(url, json=payload)
-        except Exception as e:
-            print(f"Telegram error: {e}")
-
-# Initialize Exchange (Bybit Client used to bypass Binance Cloud IP Restrictions)
-exchange = ccxt.bybit({
-    'options': {'defaultType': 'future'},
-    'enableRateLimit': True
-})
-
-# Active Trade Storage for Win/Loss Tracking
-active_trades = {}
-
-def scan_market():
-    print("Scanning top pairs (5m timeframe)...")
+# --- Binance Market Scanner & Technical Analysis ---
+def fetch_and_analyze():
+    exchange = ccxt.binance({'enableRateLimit': True})
     try:
-        markets = exchange.fetch_markets()
-        usdt_pairs = [m['symbol'] for m in markets if m['quote'] == 'USDT' and m['active']][:50]
-    except Exception as e:
-        print(f"Fetch markets error: {e}")
-        return
-
-    for symbol in usdt_pairs:
-        try:
-            bars = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=100)
-            df = pd.DataFrame(bars, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
-
-            # Technical Indicators
+        markets = exchange.load_markets()
+        symbols = [s for s in markets if s.endswith('/USDT') and markets[s]['swap']][:20]
+        
+        for symbol in symbols:
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=100)
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            
             df['rsi'] = ta.momentum.rsi(df['close'], window=14)
             df['ema20'] = ta.trend.ema_indicator(df['close'], window=20)
             df['ema50'] = ta.trend.ema_indicator(df['close'], window=50)
-
-            last_rsi = round(df['rsi'].iloc[-1], 2)
-            entry_price = df['close'].iloc[-1]
+            
+            last_close = df['close'].iloc[-1]
+            last_rsi = df['rsi'].iloc[-1]
             last_ema20 = df['ema20'].iloc[-1]
             last_ema50 = df['ema50'].iloc[-1]
-
-            # Already active trade skip
+            prev_ema20 = df['ema20'].iloc[-2]
+            prev_ema50 = df['ema50'].iloc[-2]
+            
+            # Long Signal (RSI Oversold + Bullish Crossover)
+            if last_rsi < 35 and prev_ema20 <= prev_ema50 and last_ema20 > last_ema50:
+                if symbol not in active_trades:
+                    tp = last_close * 1.015
+                    sl = last_close * 0.99
+                    active_trades[symbol] = {'side': 'LONG', 'tp': tp, 'sl': sl}
+                    msg = f"🟢 *LONG SIGNAL*\n\nPair: `{symbol}`\nEntry: `{last_close:.4f}`\nTP: `{tp:.4f}`\nSL: `{sl:.4f}`"
+                    send_telegram_msg(msg)
+                    
+            # Short Signal (RSI Overbought + Bearish Crossover)
+            elif last_rsi > 65 and prev_ema20 >= prev_ema50 and last_ema20 < last_ema50:
+                if symbol not in active_trades:
+                    tp = last_close * 0.985
+                    sl = last_close * 1.01
+                    active_trades[symbol] = {'side': 'SHORT', 'tp': tp, 'sl': sl}
+                    msg = f"🔴 *SHORT SIGNAL*\n\nPair: `{symbol}`\nEntry: `{last_close:.4f}`\nTP: `{tp:.4f}`\nSL: `{sl:.4f}`"
+                    send_telegram_msg(msg)
+                    
+            # Track Active Trades (Win / Loss)
             if symbol in active_trades:
-                continue
+                trade = active_trades[symbol]
+                if trade['side'] == 'LONG':
+                    if last_close >= trade['tp']:
+                        send_telegram_msg(f"✅ *TP HIT (WIN)*: `{symbol}`")
+                        del active_trades[symbol]
+                    elif last_close <= trade['sl']:
+                        send_telegram_msg(f"❌ *SL HIT (LOSS)*: `{symbol}`")
+                        del active_trades[symbol]
+                elif trade['side'] == 'SHORT':
+                    if last_close <= trade['tp']:
+                        send_telegram_msg(f"✅ *TP HIT (WIN)*: `{symbol}`")
+                        del active_trades[symbol]
+                    elif last_close >= trade['sl']:
+                        send_telegram_msg(f"❌ *SL HIT (LOSS)*: `{symbol}`")
+                        del active_trades[symbol]
+                        
+    except Exception as e:
+        print(f"Analysis Error: {e}")
 
-            # HIGH ACCURACY ACCORDING TO TREND (5m Logic)
-            # LONG Signal: RSI < 35 & Price > EMA20 & EMA20 > EMA50
-            if last_rsi < 35 and entry_price > last_ema20 and last_ema20 > last_ema50:
-                tp = round(entry_price * 1.012, 4)  # 1.2% TP
-                sl = round(entry_price * 0.992, 4)   # 0.8% SL
-
-                active_trades[symbol] = {'type': 'LONG', 'entry': entry_price, 'tp': tp, 'sl': sl}
-
-                msg = (
-                    f"🟢 **SIGNAL: LONG (UP)** | `{symbol}`\n\n"
-                    f"🔹 **Entry:** `{entry_price}`\n"
-                    f"🎯 **Target (TP 1.2%):** `{tp}`\n"
-                    f"🛑 **Stop Loss (SL 0.8%):** `{sl}`\n"
-                    f"📊 **RSI:** `{last_rsi}`\n\n"
-                    f"⏳ *Status: Pending Trade Tracking...*"
-                )
-                send_telegram_msg(msg)
-
-            # SHORT Signal: RSI > 65 & Price < EMA20 & EMA20 < EMA50
-            elif last_rsi > 65 and entry_price < last_ema20 and last_ema20 < last_ema50:
-                tp = round(entry_price * 0.988, 4)  # 1.2% TP
-                sl = round(entry_price * 1.008, 4)   # 0.8% SL
-
-                active_trades[symbol] = {'type': 'SHORT', 'entry': entry_price, 'tp': tp, 'sl': sl}
-
-                msg = (
-                    f"🔴 **SIGNAL: SHORT (DOWN)** | `{symbol}`\n\n"
-                    f"🔹 **Entry:** `{entry_price}`\n"
-                    f"🎯 **Target (TP 1.2%):** `{tp}`\n"
-                    f"🛑 **Stop Loss (SL 0.8%):** `{sl}`\n"
-                    f"📊 **RSI:** `{last_rsi}`\n\n"
-                    f"⏳ *Status: Pending Trade Tracking...*"
-                )
-                send_telegram_msg(msg)
-
-        except Exception:
-            continue
-
-def track_trades():
-    """Real-time Win/Loss Tracker"""
-    for symbol in list(active_trades.keys()):
-        try:
-            ticker = exchange.fetch_ticker(symbol)
-            current_price = ticker['last']
-            trade = active_trades[symbol]
-
-            if trade['type'] == 'LONG':
-                if current_price >= trade['tp']:
-                    send_telegram_msg(f"🟢 **WIN ALERT!** | `{symbol}`\n\nTarget Profit (TP) `{trade['tp']}` Hit Successfully! 🎯")
-                    del active_trades[symbol]
-                elif current_price <= trade['sl']:
-                    send_telegram_msg(f"🔴 **LOSS ALERT!** | `{symbol}`\n\nStop Loss (SL) `{trade['sl']}` Hit. 🛑")
-                    del active_trades[symbol]
-
-            elif trade['type'] == 'SHORT':
-                if current_price <= trade['tp']:
-                    send_telegram_msg(f"🟢 **WIN ALERT!** | `{symbol}`\n\nTarget Profit (TP) `{trade['tp']}` Hit Successfully! 🎯")
-                    del active_trades[symbol]
-                elif current_price >= trade['sl']:
-                    send_telegram_msg(f"🔴 **LOSS ALERT!** | `{symbol}`\n\nStop Loss (SL) `{trade['sl']}` Hit. 🛑")
-                    del active_trades[symbol]
-
-        except Exception as e:
-            print(f"Tracking error for {symbol}: {e}")
+# --- Main Automation Loop ---
+def scanner_loop():
+    time.sleep(3)
+    send_telegram_msg("🚀 *5-Minute Binance Trading Scanner & Auto-Tracker Online!*")
+    while True:
+        print("--> Scanning Binance 5m Market...")
+        fetch_and_analyze()
+        time.sleep(300)
 
 if __name__ == "__main__":
-    send_telegram_msg("🚀 **5-Minute Advanced Trading & Auto-Tracker Bot Online!**")
+    t = threading.Thread(target=run_flask)
+    t.daemon = True
+    t.start()
     
-    last_scan_time = 0
-    while True:
-        # Every 5 minutes (300 seconds) Market Scan
-        if time.time() - last_scan_time >= 300:
-            scan_market()
-            last_scan_time = time.time()
-
-        # Track active trades continuous every minute
-        track_trades()
-        time.sleep(30)
-        
+    scanner_loop()
+            
