@@ -1,3 +1,11 @@
+import os
+import time
+import threading
+import requests
+import ccxt
+import pandas as pd
+import ta
+from flask import Flask
 # --- Telegram Credentials (সরাসরি বসিয়ে দিন) ---
 TELEGRAM_BOT_TOKEN = "8837833880:AAG7S5tpFiQ2WBwFZRBT5oZFlrQ9HI_yzrQ"
 TELEGRAM_CHAT_ID = "6885238220"
@@ -10,15 +18,6 @@ def send_telegram_msg(message):
         print(f"Telegram Response: {res.text}")
     except Exception as e:
         print(f"Telegram error: {e}")
-        import os
-import time
-import threading
-import requests
-import ccxt
-import pandas as pd
-import ta
-from flask import Flask
-
 # --- Render Keep-Alive Flask Server ---
 app = Flask('')
 
