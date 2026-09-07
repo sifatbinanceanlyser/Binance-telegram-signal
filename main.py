@@ -26,7 +26,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "SMC & Order Block Engine Active!"
+    return "SMC & Order Block Signal Engine Active!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -39,35 +39,36 @@ def fetch_and_analyze():
         'enableRateLimit': True
     })
     
-    # ২০টি টপ হাই-লিকুইডিটি ক্রিপ্টো পেয়ার (SMC এনালাইসিসের জন্য সেরা)
+    # ৪০টি লিকুইড ক্রিপ্টো পেয়ার (Quotex রিয়েল মার্কেট ম্যাচিং)
     symbols = [
         'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
         'ADA/USDT', 'DOGE/USDT', 'AVAX/USDT', 'LINK/USDT', 'DOT/USDT',
         'MATIC/USDT', 'LTC/USDT', 'TRX/USDT', 'NEAR/USDT', 'APT/USDT',
-        'SHIB/USDT', 'ATOM/USDT', 'BCH/USDT', 'UNI/USDT', 'FIL/USDT'
+        'SHIB/USDT', 'ATOM/USDT', 'BCH/USDT', 'UNI/USDT', 'FIL/USDT',
+        'INJ/USDT', 'OP/USDT', 'ARB/USDT', 'SUI/USDT', 'TIA/USDT',
+        'SEI/USDT', 'FET/USDT', 'RNDR/USDT', 'GALA/USDT', 'PEPE/USDT',
+        'SAND/USDT', 'MANA/USDT', 'FTM/USDT', 'ALGO/USDT', 'EGLD/USDT',
+        'AAVE/USDT', 'THETA/USDT', 'AXS/USDT', 'EOS/USDT', 'KAVA/USDT'
     ]
     
     for symbol in symbols:
         try:
-            ohlcv = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=40)
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=35)
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             
             # --- SMC CALCULATIONS ---
-            # 1. Liquidity Sweep Detection
             df['prev_high'] = df['high'].shift(1)
             df['prev_low'] = df['low'].shift(1)
             
             df['bullish_sweep'] = df['low'] < df['prev_low']  
             df['bearish_sweep'] = df['high'] > df['prev_high']
 
-            # 2. Fair Value Gap (FVG) / Imbalance
             df['bullish_fvg'] = df['low'] > df['high'].shift(2)
             df['bearish_fvg'] = df['high'] < df['low'].shift(2)
 
             last_close = df['close'].iloc[-1]
             last_open = df['open'].iloc[-1]
             
-            # Optimized SMC Conditions
             is_bullish_ob = (df['bullish_sweep'].iloc[-2] or df['bullish_sweep'].iloc[-1]) and \
                             (df['bullish_fvg'].iloc[-1] or (last_close > df['high'].iloc[-2])) and \
                             (last_close > last_open)
@@ -137,17 +138,17 @@ def fetch_and_analyze():
                     
                     del active_trades[symbol]
             
-            time.sleep(0.1) # Rate Limit Protection
+            time.sleep(0.05) # Rate Limit Protection
                         
     except Exception as e:
         print(f"Error: {e}")
 
 def scanner_loop():
     time.sleep(3)
-    send_telegram_msg("⚡ *SMC & Order Block Engine Scanner Activated!*")
+    send_telegram_msg("⚡ *High-Speed 40-Pair SMC Scanner Activated!*")
     while True:
         fetch_and_analyze()
-        time.sleep(10)
+        time.sleep(5)
 
 if __name__ == "__main__":
     t = threading.Thread(target=run_flask)
