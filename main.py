@@ -39,7 +39,6 @@ def fetch_and_analyze():
         'enableRateLimit': True
     })
     
-    # ৪০টি লিকুইড ক্রিপ্টো পেয়ার (Quotex রিয়েল মার্কেট ম্যাচিং)
     symbols = [
         'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
         'ADA/USDT', 'DOGE/USDT', 'AVAX/USDT', 'LINK/USDT', 'DOT/USDT',
@@ -56,7 +55,6 @@ def fetch_and_analyze():
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=35)
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             
-            # --- SMC CALCULATIONS ---
             df['prev_high'] = df['high'].shift(1)
             df['prev_low'] = df['low'].shift(1)
             
@@ -77,7 +75,6 @@ def fetch_and_analyze():
                             (df['bearish_fvg'].iloc[-1] or (last_close < df['low'].iloc[-2])) and \
                             (last_close < last_open)
 
-            # --- BULLISH SIGNAL (UP) ---
             if is_bullish_ob:
                 if symbol not in active_trades:
                     entry_time = time.time()
@@ -98,7 +95,6 @@ def fetch_and_analyze():
                            f"👉 *Action:* Place UP trade on Quotex now!")
                     send_telegram_msg(msg)
 
-            # --- BEARISH SIGNAL (DOWN) ---
             elif is_bearish_ob:
                 if symbol not in active_trades:
                     entry_time = time.time()
@@ -119,7 +115,6 @@ def fetch_and_analyze():
                            f"👉 *Action:* Place DOWN trade on Quotex now!")
                     send_telegram_msg(msg)
 
-            # --- RESULT TRACKER ---
             current_time = time.time()
             if symbol in active_trades:
                 trade = active_trades[symbol]
@@ -138,10 +133,10 @@ def fetch_and_analyze():
                     
                     del active_trades[symbol]
             
-            time.sleep(0.05) # Rate Limit Protection
+            time.sleep(0.05)
                         
-    except Exception as e:
-        print(f"Error: {e}")
+        except Exception as e:
+            print(f"Error on {symbol}: {e}")
 
 def scanner_loop():
     time.sleep(3)
