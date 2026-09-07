@@ -1,16 +1,13 @@
 import os
 import time
-import json
 import threading
 import requests
-import websocket
 import pandas as pd
 from flask import Flask
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8447772474:AAF_CwpS1e3clYMEkuN0VZ6UTFqzTsnK2KE")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "6885238220")
 
-candle_data = {}
 active_trades = {}
 
 def send_telegram_msg(message):
@@ -25,137 +22,150 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "All 5 Strategies + Real-Time WebSocket Engine Active!"
+    return "5-Pic Setup + Moderate SMC Engine Active on Free Render!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-# Complete Strategy Analysis Logic
-def analyze_completed_candle(symbol, kline):
-    open_p = float(kline['o'])
-    close_p = float(kline['c'])
-    high_p = float(kline['h'])
-    low_p = float(kline['l'])
-    is_closed = kline['x']
+def get_binance_ohlcv(symbol, interval='1m', limit=25):
+    formatted_symbol = symbol.replace('/', '')
+    url = f"https://api.binance.com/api/v3/klines?symbol={formatted_symbol}&interval={interval}&limit={limit}"
+    
+    try:
+        response = requests.get(url, timeout=4)
+        data = response.json()
+        if isinstance(data, list):
+            parsed_data = []
+            for item in data:
+                parsed_data.append([
+                    item[0], float(item[1]), float(item[2]), 
+                    float(item[3]), float(item[4]), float(item[5])
+                ])
+            return parsed_data
+    except Exception as e:
+        print(f"Error on {symbol}: {e}")
+    return []
 
-    if not is_closed:
-        return
+def fetch_and_analyze():
+    symbols = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT', 'DOGE/USDT', 'AVAX/USDT']
+    
+    for symbol in symbols:
+        try:
+            ohlcv = get_binance_ohlcv(symbol, interval='1m', limit=25)
+            if not ohlcv or len(ohlcv) < 15:
+                continue
 
-    if symbol not in candle_data:
-        candle_data[symbol] = []
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            
+            close_p = df['close'].iloc[-1]
+            open_p = df['open'].iloc[-1]
+            high_p = df['high'].iloc[-1]
+            low_p = df['low'].iloc[-1]
 
-    candle_data[symbol].append({
-        'open': open_p, 'close': close_p,
-        'high': high_p, 'low': low_p
-    })
+            prev_close = df['close'].iloc[-2]
+            prev_open = df['open'].iloc[-2]
 
-    if len(candle_data[symbol]) > 30:
-        candle_data[symbol].pop(0)
+            # --- MODERATE SMC & 5-PICTURE STRATEGIES ---
+            
+            # 1. SMC Liquidity Sweep & Reversal
+            prev_high = df['high'].iloc[-2]
+            prev_low = df['low'].iloc[-2]
+            
+            smc_bullish_sweep = (low_p < prev_low) and (close_p > open_p)
+            smc_bearish_sweep = (high_p > prev_high) and (close_p < open_p)
 
-    df = pd.DataFrame(candle_data[symbol])
-    if len(df) < 15:
-        return
+            # 2. Support & Resistance Shot Pattern (Image 1 & 2)
+            resistance = df['high'].iloc[-10:-1].max()
+            support = df['low'].iloc[-10:-1].min()
 
-    # --- 1. SMC CALCULATIONS ---
-    df['prev_high'] = df['high'].shift(1)
-    df['prev_low'] = df['low'].shift(1)
-    df['bullish_sweep'] = df['low'] < df['prev_low']
-    df['bearish_sweep'] = df['high'] > df['prev_high']
-    df['bullish_fvg'] = df['low'] > df['high'].shift(2)
-    df['bearish_fvg'] = df['high'] < df['low'].shift(2)
+            is_shot_bullish = (close_p > resistance) and (close_p > open_p)
+            is_shot_bearish = (close_p < support) and (close_p < open_p)
 
-    is_smc_bullish = (df['bullish_sweep'].iloc[-2] or df['bullish_sweep'].iloc[-1]) and \
-                     (df['bullish_fvg'].iloc[-1] or (close_p > df['high'].iloc[-2])) and (close_p > open_p)
+            # 3. Back-to-Back Candle Breakout (Image 1)
+            is_b2b_support_break = (prev_close > prev_open) and (close_p < open_p) and (close_p < df['low'].iloc[-2])
 
-    is_smc_bearish = (df['bearish_sweep'].iloc[-2] or df['bearish_sweep'].iloc[-1]) and \
-                     (df['bearish_fvg'].iloc[-1] or (close_p < df['low'].iloc[-2])) and (close_p < open_p)
+            # 4. Trend Continuation Rejection (Image 3)
+            red_count = (df['close'].iloc[-5:-2] < df['open'].iloc[-5:-2]).sum()
+            is_rejection_bearish = (red_count >= 2) and (prev_close > prev_open) and (close_p < open_p) and (close_p < prev_open)
 
-    # --- 2. SHOT PATTERN & SUPPORT BREAKOUT (IMAGE 1 & 2) ---
-    resistance = df['high'].iloc[-10:-1].max()
-    support = df['low'].iloc[-10:-1].min()
+            # --- SIGNAL SELECTION ---
+            signal_type = None
+            reason = ""
 
-    is_shot_bullish = (close_p > resistance) and (close_p > open_p)
-    is_shot_bearish = (close_p < support) and (close_p < open_p)
+            if smc_bullish_sweep:
+                signal_type = "UP"
+                reason = "SMC Liquidity Sweep Reversal"
+            elif is_shot_bullish:
+                signal_type = "UP"
+                reason = "Shot Pattern Resistance Breakout"
+            elif smc_bearish_sweep:
+                signal_type = "DOWN"
+                reason = "SMC Liquidity Sweep Reversal"
+            elif is_shot_bearish:
+                signal_type = "DOWN"
+                reason = "Shot Pattern Support Breakout"
+            elif is_b2b_support_break:
+                signal_type = "DOWN"
+                reason = "Back-to-Back Support Break"
+            elif is_rejection_bearish:
+                signal_type = "DOWN"
+                reason = "Trend Continuation Rejection"
 
-    # --- 3. TREND CONTINUATION & REJECTION (IMAGE 3) ---
-    red_count = (df['close'].iloc[-6:-2] < df['open'].iloc[-6:-2]).sum()
-    is_rejection_bearish = (red_count >= 3) and \
-                           (df['close'].iloc[-2] > df['open'].iloc[-2]) and \
-                           (close_p < open_p) and (close_p <= support)
+            # Execute Signal
+            if signal_type and symbol not in active_trades:
+                active_trades[symbol] = {
+                    'direction': signal_type,
+                    'entry_price': close_p,
+                    'expire_time': time.time() + 60
+                }
 
-    # --- FINAL SIGNAL DECISION ---
-    signal_type = None
-    reason = ""
+                emoji = "🟢" if signal_type == "UP" else "🔴"
+                action = "UP (Call)" if signal_type == "UP" else "DOWN (Put)"
 
-    if is_smc_bullish:
-        signal_type = "UP"
-        reason = "SMC Liquidity Sweep + FVG"
-    elif is_shot_bullish:
-        signal_type = "UP"
-        reason = "Shot Pattern Resistance Breakout"
-    elif is_smc_bearish:
-        signal_type = "DOWN"
-        reason = "SMC Liquidity Sweep + FVG"
-    elif is_shot_bearish:
-        signal_type = "DOWN"
-        reason = "Shot Pattern Support Breakout"
-    elif is_rejection_bearish:
-        signal_type = "DOWN"
-        reason = "Trend Continuation Rejection Setup"
+                msg = (f"{emoji} *MODERATE 1-MIN LIVE SIGNAL*\n\n"
+                       f"🪙 *Asset:* `{symbol}`\n"
+                       f"📈 *Direction:* `{action}`\n"
+                       f"⏱️ *Timeframe:* `1 Minute`\n"
+                       f"💵 *Exact Entry:* `{close_p:.4f}`\n"
+                       f"⚡ *Strategy:* {reason}\n\n"
+                       f"👉 *Action:* Place trade on Quotex now!")
+                send_telegram_msg(msg)
 
-    # --- SEND SIGNAL ---
-    if signal_type and symbol not in active_trades:
-        active_trades[symbol] = {
-            'direction': signal_type,
-            'entry_price': close_p,
-            'expire_time': time.time() + 60
-        }
+            # Win/Loss Tracker Result
+            current_time = time.time()
+            if symbol in active_trades:
+                trade = active_trades[symbol]
+                if current_time >= trade['expire_time']:
+                    entry = trade['entry_price']
+                    if trade['direction'] == 'UP':
+                        if close_p > entry:
+                            send_telegram_msg(f"✅ *WIN!* 🎉 (1-Min)\n🪙 `{symbol}`\n📈 Direction: `UP`\n💵 Entry: `{entry:.4f}` | Exit: `{close_p:.4f}`")
+                        else:
+                            send_telegram_msg(f"❌ *LOSS!* ⚠️ (1-Min)\n🪙 `{symbol}`\n📈 Direction: `UP`\n💵 Entry: `{entry:.4f}` | Exit: `{close_p:.4f}`")
+                    elif trade['direction'] == 'DOWN':
+                        if close_p < entry:
+                            send_telegram_msg(f"✅ *WIN!* 🎉 (1-Min)\n🪙 `{symbol}`\n📉 Direction: `DOWN`\n💵 Entry: `{entry:.4f}` | Exit: `{close_p:.4f}`")
+                        else:
+                            send_telegram_msg(f"❌ *LOSS!* ⚠️ (1-Min)\n🪙 `{symbol}`\n📉 Direction: `DOWN`\n💵 Entry: `{entry:.4f}` | Exit: `{close_p:.4f}`")
+                    
+                    del active_trades[symbol]
 
-        emoji = "🟢" if signal_type == "UP" else "🔴"
-        action = "UP (Call)" if signal_type == "UP" else "DOWN (Put)"
+            time.sleep(0.05)
 
-        msg = (f"{emoji} *EXACT LIVE 1-MIN SIGNAL*\n\n"
-               f"🪙 *Asset:* `{symbol.upper()}`\n"
-               f"📈 *Direction:* `{action}`\n"
-               f"⏱️ *Timeframe:* `1 Minute`\n"
-               f"💵 *Exact Entry:* `{close_p:.4f}`\n"
-               f"⚡ *Strategy:* {reason}\n\n"
-               f"👉 *Action:* Place trade on Quotex right now!")
-        send_telegram_msg(msg)
+        except Exception as e:
+            print(f"Error on {symbol}: {e}")
 
-# Binance Live WebSocket Stream
-def on_message(ws, message):
-    data = json.loads(message)
-    if 'data' in data and 'k' in data['data']:
-        symbol = data['data']['s']
-        kline = data['data']['k']
-        analyze_completed_candle(symbol, kline)
-
-def start_websocket():
-    symbols = ['btcusdt', 'ethusdt', 'bnbusdt', 'solusdt', 'xrpusdt', 'adausdt', 'dogeusdt', 'avaxusdt', 'nearusdt', 'linkusdt']
-    streams = "/".join([f"{s}@kline_1m" for s in symbols])
-    socket_url = f"wss://stream.binance.com:9443/stream?streams={streams}"
-
-    ws = websocket.WebSocketApp(
-        socket_url,
-        on_message=on_message,
-        on_error=lambda ws, err: print(f"WS Error: {err}"),
-        on_close=lambda ws, c, m: print("WS Closed. Reconnecting...")
-    )
-    ws.run_forever()
+def scanner_loop():
+    time.sleep(3)
+    send_telegram_msg("⚡ *Moderate SMC + 5-Pic Strategy Engine Activated!*")
+    while True:
+        fetch_and_analyze()
+        time.sleep(1)
 
 if __name__ == "__main__":
     t_flask = threading.Thread(target=run_flask)
     t_flask.daemon = True
     t_flask.start()
-
-    send_telegram_msg("⚡ *All 5 Strategies + Live WebSocket Engine Connected!*")
-
-    while True:
-        try:
-            start_websocket()
-        except Exception as e:
-            print(f"Connection lost, retrying... {e}")
-            time.sleep(2)
-            
+    scanner_loop()
+                    
