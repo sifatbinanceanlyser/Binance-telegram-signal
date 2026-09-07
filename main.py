@@ -22,14 +22,13 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "1-Min SMC + Shot Pattern Signal Engine Active!"
+    return "SMC + Multi-Pattern 1-Min Signal Engine Active!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
 def get_binance_ohlcv(symbol, interval='1m', limit=35):
-    # Fetch public market data directly to bypass location restriction
     formatted_symbol = symbol.replace('/', '')
     url = f"https://api.binance.com/api/v3/klines?symbol={formatted_symbol}&interval={interval}&limit={limit}"
     
@@ -68,19 +67,19 @@ def fetch_and_analyze():
             ohlcv = get_binance_ohlcv(symbol, interval='1m', limit=35)
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             
+            last_close = df['close'].iloc[-1]
+            last_open = df['open'].iloc[-1]
+            last_high = df['high'].iloc[-1]
+            last_low = df['low'].iloc[-1]
+
             # --- 1. SMC CALCULATIONS ---
             df['prev_high'] = df['high'].shift(1)
             df['prev_low'] = df['low'].shift(1)
-            
             df['bullish_sweep'] = df['low'] < df['prev_low']  
             df['bearish_sweep'] = df['high'] > df['prev_high']
-
             df['bullish_fvg'] = df['low'] > df['high'].shift(2)
             df['bearish_fvg'] = df['high'] < df['low'].shift(2)
 
-            last_close = df['close'].iloc[-1]
-            last_open = df['open'].iloc[-1]
-            
             is_smc_bullish = (df['bullish_sweep'].iloc[-2] or df['bullish_sweep'].iloc[-1]) and \
                              (df['bullish_fvg'].iloc[-1] or (last_close > df['high'].iloc[-2])) and \
                              (last_close > last_open)
@@ -89,34 +88,41 @@ def fetch_and_analyze():
                              (df['bearish_fvg'].iloc[-1] or (last_close < df['low'].iloc[-2])) and \
                              (last_close < last_open)
 
-            # --- 2. SHOT PATTERN CALCULATIONS ---
+            # --- 2. SHOT PATTERN (IMAGE 1 & 2) ---
             resistance_level = df['high'].iloc[-10:-1].max()
             support_level = df['low'].iloc[-10:-1].min()
 
             is_shot_bullish = (last_close > resistance_level) and (last_close > last_open)
             is_shot_bearish = (last_close < support_level) and (last_close < last_open)
 
-            # --- SIGNAL GENERATION ---
+            # --- 3. TREND CONTINUATION & REJECTION (IMAGE 3) ---
+            # Checks for 4+ consecutive red candles, then 1-2 green, then rejection
+            red_count = (df['close'].iloc[-7:-3] < df['open'].iloc[-7:-3]).sum()
+            is_rejection_bearish = (red_count >= 3) and \
+                                   (df['close'].iloc[-3] > df['open'].iloc[-3]) and \
+                                   (last_close < last_open) and \
+                                   (last_close <= support_level)
+
+            # --- SIGNAL SELECTION ---
             signal_type = None
             reason = ""
 
-            if is_smc_bullish:
+            if is_smc_bullish or is_shot_bullish:
                 signal_type = "UP"
-                reason = "SMC Liquidity Sweep + FVG Imbalance"
-            elif is_shot_bullish:
-                signal_type = "UP"
-                reason = "Shot Pattern Resistance Breakout"
+                reason = "SMC Imbalance / Breakout Setup"
             elif is_smc_bearish:
                 signal_type = "DOWN"
-                reason = "SMC Liquidity Sweep + FVG Imbalance"
+                reason = "SMC Bearish Order Block"
             elif is_shot_bearish:
                 signal_type = "DOWN"
                 reason = "Shot Pattern Support Breakout"
+            elif is_rejection_bearish:
+                signal_type = "DOWN"
+                reason = "Trend Continuation Rejection Setup"
 
-            # Execute Signals (1 Minute Expiration)
+            # Execute Signals (1-Minute Expiration)
             if signal_type == 'UP' and symbol not in active_trades:
                 entry_time = time.time()
-                stop_loss = df['low'].iloc[-3]
                 active_trades[symbol] = {
                     'direction': 'UP',
                     'entry_price': last_close,
@@ -128,14 +134,12 @@ def fetch_and_analyze():
                        f"📈 *Direction:* `UP (Call)`\n"
                        f"⏱️ *Timeframe:* `1 Minute`\n"
                        f"💵 *Entry Price:* `{last_close:.4f}`\n"
-                       f"🛑 *Invalidation (SL):* `{stop_loss:.4f}`\n"
                        f"⚡ *Reason:* {reason}!\n\n"
                        f"👉 *Action:* Place 1-Min UP trade on Quotex now!")
                 send_telegram_msg(msg)
 
             elif signal_type == 'DOWN' and symbol not in active_trades:
                 entry_time = time.time()
-                stop_loss = df['high'].iloc[-3]
                 active_trades[symbol] = {
                     'direction': 'DOWN',
                     'entry_price': last_close,
@@ -147,12 +151,11 @@ def fetch_and_analyze():
                        f"📉 *Direction:* `DOWN (Put)`\n"
                        f"⏱️ *Timeframe:* `1 Minute`\n"
                        f"💵 *Entry Price:* `{last_close:.4f}`\n"
-                       f"🛑 *Invalidation (SL):* `{stop_loss:.4f}`\n"
                        f"⚡ *Reason:* {reason}!\n\n"
                        f"👉 *Action:* Place 1-Min DOWN trade on Quotex now!")
                 send_telegram_msg(msg)
 
-            # --- RESULT TRACKER (1 Minute) ---
+            # --- RESULT TRACKER ---
             current_time = time.time()
             if symbol in active_trades:
                 trade = active_trades[symbol]
@@ -178,7 +181,7 @@ def fetch_and_analyze():
 
 def scanner_loop():
     time.sleep(3)
-    send_telegram_msg("⚡ *High-Speed 1-Minute SMC + Shot Pattern Scanner Activated!*")
+    send_telegram_msg("⚡ *High-Speed SMC + Multi-Pattern Scanner Activated!*")
     while True:
         fetch_and_analyze()
         time.sleep(3)
@@ -188,4 +191,4 @@ if __name__ == "__main__":
     t.daemon = True
     t.start()
     scanner_loop()
-                
+            
