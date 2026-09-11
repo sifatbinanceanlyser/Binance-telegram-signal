@@ -3,3 +3,4 @@ requests
 websocket-client
 python-dotenv
 python-telegram-bot
+quotexpy==2.2.0
