@@ -1,7 +1,7 @@
 import time
 import requests
 import pandas as pd
-from quotexapi.stable_api import Quotex
+from quotexpy import Quotex
 
 
 # ==========================================
