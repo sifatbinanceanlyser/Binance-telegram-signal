@@ -3,4 +3,4 @@ requests
 websocket-client
 python-dotenv
 python-telegram-bot
-git+https://github.com/K33P3R-0/quotexapi.git
+quotexpy
