@@ -3,4 +3,3 @@ requests
 websocket-client
 python-dotenv
 python-telegram-bot
-quotexapi
