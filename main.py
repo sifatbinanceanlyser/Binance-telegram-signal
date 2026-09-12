@@ -47,13 +47,14 @@ ALL_STRATEGIES = [
 # ==========================================
 # ৩. কনফিগারেশন
 # ==========================================
+# ব্রাউজারের Cookie থেকে নতুন Fresh SSID কপি করে এখানে দিন
 QUOTEX_SSID = "eyJpd2lsIilJBYXJ6WDINb1p6L00ycTZ3cjgxS0E9PSIsInZhHVlljoiQ05mRE56TUl1aHVCN05yYm9VdXB1ck5xM2QvbHZOVDFDZkUvZTdyak1UZmNHVXpHYUhjWjdQnFWMm15iajlzRTIxWkdYb3JzS0ZTY2RwdjBVM2VVTJBFNGp4WGtucFBZMm1xcmTRncjNHM0IrajMwVIV3eXBzTWIFVS9BWUtNOHYiLCJtYWMiOiI4NjkwMDA3Yjc0ZjNiNTc3NjNmMJWJNjMwMzJjZTE2ZWxwZWU4MmVINzA3M2M2Y2YTI3OGY0ZjkzNGQ4ZTtk5liwidGfNljoiln0%3D"
 TELEGRAM_BOT_TOKEN = "8447772474:AAF_CwpS1e3clYMEkuN0VZ6UTFqzTsnK2KE"
 TELEGRAM_CHAT_ID = "6885238220"
 ASSET = "EURUSD_fut"
 
 # ==========================================
-# ৪. টেলিগ্রাম সিগন্যাল সেন্ডার
+# ৪. টেলিগ্রাম সিগন্যাল সেন্ডার (Enhanced)
 # ==========================================
 def send_telegram_signal(message):
     try:
@@ -63,7 +64,9 @@ def send_telegram_signal(message):
             "text": message,
             "parse_mode": "Markdown"
         }
-        requests.post(url, json=payload, timeout=5)
+        resp = requests.post(url, json=payload, timeout=5)
+        if resp.status_code != 200:
+            print(f"Telegram Failed ({resp.status_code}): {resp.text}")
     except Exception as e:
         print(f"Telegram Notification Error: {e}")
 
@@ -87,7 +90,7 @@ def analyze_strategies(df):
     return None, None
 
 # ==========================================
-# ৬. Quotex Direct WebSocket Client (Fixed)
+# ৬. Quotex Direct WebSocket Client
 # ==========================================
 class QuotexDirectClient:
     def __init__(self, ssid, asset):
@@ -107,7 +110,6 @@ class QuotexDirectClient:
                 data = json.loads(message[2:])
                 topic = data[0] if len(data) > 0 else ""
                 
-                # ক্যান্ডেল হিস্ট্রি বা নতুন ক্যান্ডেল মেসেজ রিসিভ করা
                 if topic in ["candles", "history", "candles/update"]:
                     raw_candles = data[1]
                     if isinstance(raw_candles, list) and len(raw_candles) > 0:
@@ -121,12 +123,10 @@ class QuotexDirectClient:
         print("Connected directly to Quotex WebSocket!")
         self.is_connected = True
         
-        # ১. অথেন্টিকেশন মেসেজ
         auth_msg = f'42["authorization", {{"session": "{self.ssid}"}}]'
         ws.send(auth_msg)
         time.sleep(1)
         
-        # ২. ক্যান্ডেল ডেটার জন্য নির্দিষ্ট অ্যাসেটে সাবস্ক্রাইব করা (Fixed)
         sub_msg = f'42["candles/subscribe", {{"asset": "{self.asset}", "period": 60}}]'
         ws.send(sub_msg)
         print(f"=> Subscribed to 1-Min candles for {self.asset}")
@@ -157,25 +157,27 @@ class QuotexDirectClient:
         wst.start()
 
 # ==========================================
-# ৭. মূল এক্সিকিউশন লুপ (Fixed Data Mapping)
+# ৭. মূল এক্সিকিউশন লুপ (With Startup Verification)
 # ==========================================
 client = QuotexDirectClient(QUOTEX_SSID, ASSET)
 client.connect()
 
-last_signal_time = 0
+# ডিপ্লয় হলে টেলিগ্রামে টেস্ট মেসেজ পাঠানো
+send_telegram_signal("🚀 *Quotex Signal Bot Deploy Successful!* System is online and monitoring market live.")
 
+last_signal_time = 0
 print("Trading Bot is running active & monitoring markets...")
 
 while True:
     try:
         if not client.is_connected:
+            print("Waiting for WebSocket connection...")
             time.sleep(2)
             continue
 
         if len(client.candles_data) > 0:
             df = pd.DataFrame(client.candles_data)
 
-            # নিখুঁত কলাম ম্যাপিং
             rename_dict = {}
             for col in df.columns:
                 c_str = str(col).lower()
@@ -194,8 +196,7 @@ while True:
                 if current_time != last_signal_time:
                     signal, strategy_name = analyze_strategies(df)
                     
-                    # স্ক্যান লোগ
-                    print(f"[{time.strftime('%H:%M:%S')}] Candle Analyzed. Result: {signal if signal else 'No Pattern'}")
+                    print(f"[{time.strftime('%H:%M:%S')}] Candle Processed. Signal: {signal if signal else 'No Pattern'}")
 
                     if signal:
                         last_signal_time = current_time
@@ -207,11 +208,13 @@ while True:
                             f"⏰ *Timeframe:* 1 Min"
                         )
                         send_telegram_signal(msg)
-                        print(f"✅ [{time.strftime('%H:%M:%S')}] Signal Sent: {signal} ({strategy_name})")
+                        print(f"✅ Signal Sent to Telegram: {signal} ({strategy_name})")
+        else:
+            print("Waiting for candle data from Quotex...")
 
         time.sleep(5)
 
     except Exception as e:
         print(f"Main Loop Error: {e}")
         time.sleep(5)
-        
+                        
