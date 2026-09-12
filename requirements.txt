@@ -1,4 +1,3 @@
-git+https://github.com/theshadow76/QuotexAPI.git
+websocket-client
 requests
 pandas
-websocket-client
