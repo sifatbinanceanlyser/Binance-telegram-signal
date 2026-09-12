@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 
 def detect_setup_10_with_prior_green(df):
     """
@@ -20,8 +21,10 @@ def detect_setup_10_with_prior_green(df):
     red_candle_1 = is_red.shift(2)
     red_candle_2 = is_red.shift(1)
 
-    # Get the highest price/open level of the 2 red candles
-    two_reds_max_high = df[['High', 'Open']].shift(1).combine(df[['High', 'Open']].shift(2), max)
+    # Get the highest price/open level between the 2 red candles (Fixed using numpy)
+    high_shift1 = df[['High', 'Open']].shift(1).max(axis=1)
+    high_shift2 = df[['High', 'Open']].shift(2).max(axis=1)
+    two_reds_max_high = np.maximum(high_shift1, high_shift2)
 
     # Step 3: Big Green Engulfing Candle (Candle 4)
     # - Must be a Green Candle
@@ -29,7 +32,7 @@ def detect_setup_10_with_prior_green(df):
     # - Closes strictly ABOVE the highest level of both red candles
     big_green_engulf = is_green & \
                        (df['Open'] <= df['Close'].shift(1)) & \
-                       (df['Close'] > two_reds_max_high['High'])
+                       (df['Close'] > two_reds_max_high)
 
     # Combine All Conditions
     pattern_matched = prior_green_candle & red_candle_1 & red_candle_2 & big_green_engulf
