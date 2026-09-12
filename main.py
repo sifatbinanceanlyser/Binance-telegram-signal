@@ -17,17 +17,17 @@ import Strategy7
 
 ALL_STRATEGIES = [
     Strategy1, Strategy2, Strategy3, Strategy4,
-    Strategy5, Strategy6, Strategy7, Strategy8
+    Strategy5, Strategy6, Strategy7
 ]
 
 # ==========================================
-# ২. কনফিগারেশন (সেশন টোকেন ও ক্রেডেনশিয়াল)
+# ২. কনফিগারেশন (SSID এবং টেলিগ্রাম টোকেন)
 # ==========================================
-# সংগৃহীত SSID টোকেন
+# আপনার স্ক্রিনশট থেকে নেওয়া সেশন টোকেন
 QUOTEX_SSID = "eyJpd2lsIilJBYXJ6WDINb1p6L00ycTZ3cjgxS0E9PSIsInZhHVlljoiQ05mRE56TUl1aHVCN05yYm9VdXB1ck5xM2QvbHZOVDFDZkUvZTdyak1UZmNHVXpHYUhjWjdQnFWMm15iajlzRTIxWkdYb3JzS0ZTY2RwdjBVM2VVTJBFNGp4WGtucFBZMm1xcmTRncjNHM0IrajMwVIV3eXBzTWIFVS9BWUtNOHYiLCJtYWMiOiI4NjkwMDA3Yjc0ZjNiNTc3NjNmMJWJNjMwMzJjZTE2ZWxwZWU4MmVINzA3M2M2Y2YTI3OGY0ZjkzNGQ4ZTtk5liwidGfNljoiln0%3D"
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8447772474:AAF_CwpS1e3clYMEkuN0VZ6UTFqzTsnK2KE")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "6885238220")
+TELEGRAM_BOT_TOKEN = "8447772474:AAF_CwpS1e3clYMEkuN0VZ6UTFqzTsnK2KE"
+TELEGRAM_CHAT_ID = "6885238220"
 
 ASSET = "EURUSD_fut"  # ট্রেড করার কারেন্সি পেয়ার
 TIMEFRAME = 60         # ১ মিনিটের ক্যান্ডেল
@@ -91,7 +91,7 @@ while True:
                 'high': 'High',
                 'low': 'Low',
                 'close': 'Close',
-                'time': 'Time'
+                *('time' in df.columns and {'time': 'Time'} or {}): 'Time'
             }, inplace=True)
 
             current_candle_time = df['Time'].iloc[-1]
@@ -100,7 +100,7 @@ while True:
             if current_candle_time != last_candle_time:
                 last_candle_time = current_candle_time
                 
-                # সিগন্যাল এনালাইসিস
+                # সিগন্যাল এনালাইসিস (আপনার ৭টি স্ট্র্যাটেজি দিয়ে)
                 signal, strategy_name = run_all_strategies(df)
 
                 if signal:
@@ -119,4 +119,4 @@ while True:
     except Exception as e:
         print(f"Loop Error: {e}")
         time.sleep(5)
-                
+        
