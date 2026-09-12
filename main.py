@@ -5,9 +5,32 @@ import requests
 import pandas as pd
 import websocket
 import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # ==========================================
-# ১. স্ট্র্যাটেজি ফাইল ইমপোর্ট
+# ১. Render Port Check Bypass Server
+# ==========================================
+class WebServerHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b"Quotex Trading Bot is Active & Running Live!")
+
+    def log_message(self, format, *args):
+        return  # কনসোল লগ পরিষ্কার রাখার জন্য
+
+def run_http_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), WebServerHandler)
+    server.serve_forever()
+
+# ব্যাকগ্রাউন্ড থ্রেডে সার্ভার স্টার্ট
+threading.Thread(target=run_http_server, daemon=True).start()
+print("=> Render Web Server Started Successfully.")
+
+# ==========================================
+# ২. স্ট্র্যাটেজি ফাইল ইমপোর্ট
 # ==========================================
 import Strategy1
 import Strategy2
@@ -23,7 +46,7 @@ ALL_STRATEGIES = [
 ]
 
 # ==========================================
-# ২. কনফিগারেশন
+# ৩. কনফিগারেশন
 # ==========================================
 QUOTEX_SSID = "eyJpd2lsIilJBYXJ6WDINb1p6L00ycTZ3cjgxS0E9PSIsInZhHVlljoiQ05mRE56TUl1aHVCN05yYm9VdXB1ck5xM2QvbHZOVDFDZkUvZTdyak1UZmNHVXpHYUhjWjdQnFWMm15iajlzRTIxWkdYb3JzS0ZTY2RwdjBVM2VVTJBFNGp4WGtucFBZMm1xcmTRncjNHM0IrajMwVIV3eXBzTWIFVS9BWUtNOHYiLCJtYWMiOiI4NjkwMDA3Yjc0ZjNiNTc3NjNmMJWJNjMwMzJjZTE2ZWxwZWU4MmVINzA3M2M2Y2YTI3OGY0ZjkzNGQ4ZTtk5liwidGfNljoiln0%3D"
 TELEGRAM_BOT_TOKEN = "8447772474:AAF_CwpS1e3clYMEkuN0VZ6UTFqzTsnK2KE"
@@ -31,7 +54,7 @@ TELEGRAM_CHAT_ID = "6885238220"
 ASSET = "EURUSD_fut"
 
 # ==========================================
-# ৩. টেলিগ্রাম সিগন্যাল সেন্ডার
+# ৪. টেলিগ্রাম সিগন্যাল সেন্ডার
 # ==========================================
 def send_telegram_signal(message):
     try:
@@ -46,25 +69,26 @@ def send_telegram_signal(message):
         print(f"Telegram Notification Error: {e}")
 
 # ==========================================
-# ৪. স্ট্র্যাটেজি এনালাইসিস
+# ৫. স্ট্র্যাটেজি অ্যানালাইসিস
 # ==========================================
 def analyze_strategies(df):
     for st in ALL_STRATEGIES:
-        for func_name in ['detect_double_hammer_sell_signal', 'detect_signal']:
+        for func_name in ['detect_double_hammer_sell_signal', 'detect_signal', 'detect_setup_10_with_prior_green']:
             if hasattr(st, func_name):
                 func = getattr(st, func_name)
                 try:
                     res_df = func(df)
-                    if res_df is not None and 'Signal' in res_df.columns:
-                        signal = res_df['Signal'].iloc[-1]
-                        if signal in ['BUY', 'SELL', 'CALL', 'PUT']:
-                            return signal, st.__name__
+                    if res_df is not None and isinstance(res_df, pd.DataFrame) and 'Signal' in res_df.columns:
+                        if not res_df['Signal'].empty:
+                            signal = str(res_df['Signal'].iloc[-1]).upper()
+                            if signal in ['BUY', 'SELL', 'CALL', 'PUT', 'SURE SHOT UP / CALL', 'SURE SHOT DOWN (SELL)']:
+                                return signal, st.__name__
                 except Exception as e:
-                    print(f"Error executing {st.__name__}: {e}")
+                    print(f"Skipping strategy {st.__name__} due to error: {e}")
     return None, None
 
 # ==========================================
-# ৫. কাস্টম WebSocket ক্লায়েন্ট (Direct Connect)
+# ৬. Quotex Direct WebSocket Client
 # ==========================================
 class QuotexDirectClient:
     def __init__(self, ssid):
@@ -74,18 +98,15 @@ class QuotexDirectClient:
         self.candles_data = []
 
     def on_message(self, ws, message):
-        # Heartbeat response
         if message == '2':
             ws.send('3')
             return
 
-        # Engine.IO/Socket.IO message payload
         if message.startswith('42'):
             try:
                 data = json.loads(message[2:])
                 topic = data[0] if len(data) > 0 else ""
                 
-                # লাইভ ক্যান্ডেল বা ডাটা রিসিভ
                 if topic in ["candles", "history"]:
                     raw_candles = data[1]
                     if isinstance(raw_candles, list) and len(raw_candles) > 0:
@@ -96,7 +117,6 @@ class QuotexDirectClient:
     def on_open(self, ws):
         print("Connected directly to Quotex WebSocket!")
         self.is_connected = True
-        # Authorization handshake
         auth_msg = f'42["authorization", {{"session": "{self.ssid}"}}]'
         ws.send(auth_msg)
 
@@ -126,14 +146,14 @@ class QuotexDirectClient:
         wst.start()
 
 # ==========================================
-# ৬. মেইন এক্সিকিউশন লুপ
+# ৭. মূল এক্সিকিউশন লুপ
 # ==========================================
 client = QuotexDirectClient(QUOTEX_SSID)
 client.connect()
 
 last_signal_time = 0
 
-print("Bot is running and waiting for market candles...")
+print("Trading Bot is running active & monitoring markets...")
 
 while True:
     try:
@@ -144,11 +164,10 @@ while True:
         if len(client.candles_data) > 0:
             df = pd.DataFrame(client.candles_data)
 
-            # ডেটাফ্রেম ফরম্যাটিং
             rename_dict = {}
             for col in df.columns:
                 if str(col).lower() in ['open', 'o']: rename_dict[col] = 'Open'
-                elif str(col).lower() in ['high', 'h']: rename_dict[col] = 'High'
+                elif str(col).lower() in ['high', 'h']: rename_dict[col] = 'Low' if 'High' in rename_dict.values() else 'High'
                 elif str(col).lower() in ['low', 'l']: rename_dict[col] = 'Low'
                 elif str(col).lower() in ['close', 'c']: rename_dict[col] = 'Close'
                 elif str(col).lower() in ['time', 't']: rename_dict[col] = 'Time'
@@ -165,7 +184,7 @@ while True:
                     if signal:
                         last_signal_time = current_time
                         msg = (
-                            f"🚨 *QUOTEX DIRECT SIGNAL* 🚨\n\n"
+                            f"🚨 *QUOTEX LIVE SIGNAL* 🚨\n\n"
                             f"📊 *Asset:* {ASSET}\n"
                             f"🎯 *Signal:* {signal}\n"
                             f"🛠️ *Strategy:* {strategy_name}\n"
@@ -179,4 +198,4 @@ while True:
     except Exception as e:
         print(f"Main Loop Error: {e}")
         time.sleep(5)
-        
+                
