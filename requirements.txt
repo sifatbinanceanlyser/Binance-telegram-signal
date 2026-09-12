@@ -1,3 +1,7 @@
-websocket-client
-requests
+flask
+gunicorn
+quotexpy
 pandas
+ta
+requests
+python-telegram-bot
