@@ -1,4 +1,3 @@
-git+https://github.com/Jonathan-Ricarte/quotexapi.git
 requests
 pandas
 websocket-client
