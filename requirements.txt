@@ -1,4 +1,4 @@
-https://github.com/Jonathan-Ricarte/quotexapi/archive/refs/heads/main.zip
+git+https://github.com/ChipaDevTeam/QuotexAPI.git
 requests
 pandas
 websocket-client
