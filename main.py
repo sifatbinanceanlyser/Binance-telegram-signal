@@ -1,8 +1,12 @@
+import sys
+sys.path.append('.')
+
 import os
 import time
 import requests
 import pandas as pd
 from quotexapi.stable_api import Quotex
+
 
 # ==========================================
 # ১. স্ট্র্যাটেজি ফাইলগুলো ইমপোর্ট করা
