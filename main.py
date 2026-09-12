@@ -23,7 +23,6 @@ ALL_STRATEGIES = [
 # ==========================================
 # ২. কনফিগারেশন (SSID এবং টেলিগ্রাম টোকেন)
 # ==========================================
-# আপনার স্ক্রিনশট থেকে নেওয়া সেশন টোকেন
 QUOTEX_SSID = "eyJpd2lsIilJBYXJ6WDINb1p6L00ycTZ3cjgxS0E9PSIsInZhHVlljoiQ05mRE56TUl1aHVCN05yYm9VdXB1ck5xM2QvbHZOVDFDZkUvZTdyak1UZmNHVXpHYUhjWjdQnFWMm15iajlzRTIxWkdYb3JzS0ZTY2RwdjBVM2VVTJBFNGp4WGtucFBZMm1xcmTRncjNHM0IrajMwVIV3eXBzTWIFVS9BWUtNOHYiLCJtYWMiOiI4NjkwMDA3Yjc0ZjNiNTc3NjNmMJWJNjMwMzJjZTE2ZWxwZWU4MmVINzA3M2M2Y2YTI3OGY0ZjkzNGQ4ZTtk5liwidGfNljoiln0%3D"
 
 TELEGRAM_BOT_TOKEN = "8447772474:AAF_CwpS1e3clYMEkuN0VZ6UTFqzTsnK2KE"
@@ -91,7 +90,7 @@ while True:
                 'high': 'High',
                 'low': 'Low',
                 'close': 'Close',
-                *('time' in df.columns and {'time': 'Time'} or {}): 'Time'
+                'time': 'Time'
             }, inplace=True)
 
             current_candle_time = df['Time'].iloc[-1]
