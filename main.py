@@ -1,12 +1,8 @@
-import sys
-sys.path.append('.')
-
 import os
 import time
 import requests
 import pandas as pd
-from quotexapi.stable_api import Quotex
-
+from quotexapi.client import Quotex
 
 # ==========================================
 # ১. স্ট্র্যাটেজি ফাইলগুলো ইমপোর্ট করা
@@ -74,9 +70,10 @@ def run_all_strategies(df):
 client = Quotex(ssid=QUOTEX_SSID)
 check_connect, reason = client.connect()
 
-if not check_connect:
-    print(f"Quotex connection failed: {reason}")
-    exit()
+while not check_connect:
+    print(f"Quotex connection failed: {reason}. Retrying in 10s...")
+    time.sleep(10)
+    check_connect, reason = client.connect()
 
 print("Quotex-এর সাথে লাইভ কানেকশন সফল হয়েছে!")
 
@@ -122,4 +119,3 @@ while True:
     except Exception as e:
         print(f"Loop Error: {e}")
         time.sleep(5)
-        
