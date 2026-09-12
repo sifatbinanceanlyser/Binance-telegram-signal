@@ -1,11 +1,13 @@
 import os
 import time
+import json
 import requests
 import pandas as pd
-from quotexapi.client import Quotex
+import websocket
+import threading
 
 # ==========================================
-# ১. স্ট্র্যাটেজি ফাইলগুলো ইমপোর্ট করা
+# ১. স্ট্র্যাটেজি ফাইল ইমপোর্ট
 # ==========================================
 import Strategy1
 import Strategy2
@@ -21,35 +23,32 @@ ALL_STRATEGIES = [
 ]
 
 # ==========================================
-# ২. কনফিগারেশন (SSID এবং টেলিগ্রাম টোকেন)
+# ২. কনফিগারেশন
 # ==========================================
 QUOTEX_SSID = "eyJpd2lsIilJBYXJ6WDINb1p6L00ycTZ3cjgxS0E9PSIsInZhHVlljoiQ05mRE56TUl1aHVCN05yYm9VdXB1ck5xM2QvbHZOVDFDZkUvZTdyak1UZmNHVXpHYUhjWjdQnFWMm15iajlzRTIxWkdYb3JzS0ZTY2RwdjBVM2VVTJBFNGp4WGtucFBZMm1xcmTRncjNHM0IrajMwVIV3eXBzTWIFVS9BWUtNOHYiLCJtYWMiOiI4NjkwMDA3Yjc0ZjNiNTc3NjNmMJWJNjMwMzJjZTE2ZWxwZWU4MmVINzA3M2M2Y2YTI3OGY0ZjkzNGQ4ZTtk5liwidGfNljoiln0%3D"
-
 TELEGRAM_BOT_TOKEN = "8447772474:AAF_CwpS1e3clYMEkuN0VZ6UTFqzTsnK2KE"
 TELEGRAM_CHAT_ID = "6885238220"
-
-ASSET = "EURUSD_fut"  # ট্রেড করার কারেন্সি পেয়ার
-TIMEFRAME = 60         # ১ মিনিটের ক্যান্ডেল
+ASSET = "EURUSD_fut"
 
 # ==========================================
-# ৩. টেলিগ্রাম সিগন্যাল ফাংশন
+# ৩. টেলিগ্রাম সিগন্যাল সেন্ডার
 # ==========================================
 def send_telegram_signal(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown"
-    }
     try:
-        requests.post(url, json=payload, timeout=10)
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+        requests.post(url, json=payload, timeout=5)
     except Exception as e:
-        print(f"Telegram Error: {e}")
+        print(f"Telegram Notification Error: {e}")
 
 # ==========================================
-# ৪. সব স্ট্র্যাটেজি রান করার লজিক
+# ৪. স্ট্র্যাটেজি এনালাইসিস
 # ==========================================
-def run_all_strategies(df):
+def analyze_strategies(df):
     for st in ALL_STRATEGIES:
         for func_name in ['detect_double_hammer_sell_signal', 'detect_signal']:
             if hasattr(st, func_name):
@@ -58,64 +57,126 @@ def run_all_strategies(df):
                     res_df = func(df)
                     if res_df is not None and 'Signal' in res_df.columns:
                         signal = res_df['Signal'].iloc[-1]
-                        if signal != 'HOLD':
+                        if signal in ['BUY', 'SELL', 'CALL', 'PUT']:
                             return signal, st.__name__
                 except Exception as e:
-                    print(f"Error in {st.__name__}: {e}")
+                    print(f"Error executing {st.__name__}: {e}")
     return None, None
 
 # ==========================================
-# ৫. কোটেক্স লাইভ কানেকশন ও লুপ
+# ৫. কাস্টম WebSocket ক্লায়েন্ট (Direct Connect)
 # ==========================================
-client = Quotex(ssid=QUOTEX_SSID)
-check_connect, reason = client.connect()
+class QuotexDirectClient:
+    def __init__(self, ssid):
+        self.ssid = ssid
+        self.ws = None
+        self.is_connected = False
+        self.candles_data = []
 
-while not check_connect:
-    print(f"Quotex connection failed: {reason}. Retrying in 10s...")
-    time.sleep(10)
-    check_connect, reason = client.connect()
+    def on_message(self, ws, message):
+        # Heartbeat response
+        if message == '2':
+            ws.send('3')
+            return
 
-print("Quotex-এর সাথে লাইভ কানেকশন সফল হয়েছে!")
+        # Engine.IO/Socket.IO message payload
+        if message.startswith('42'):
+            try:
+                data = json.loads(message[2:])
+                topic = data[0] if len(data) > 0 else ""
+                
+                # লাইভ ক্যান্ডেল বা ডাটা রিসিভ
+                if topic in ["candles", "history"]:
+                    raw_candles = data[1]
+                    if isinstance(raw_candles, list) and len(raw_candles) > 0:
+                        self.candles_data = raw_candles
+            except Exception:
+                pass
 
-last_candle_time = 0
+    def on_open(self, ws):
+        print("Connected directly to Quotex WebSocket!")
+        self.is_connected = True
+        # Authorization handshake
+        auth_msg = f'42["authorization", {{"session": "{self.ssid}"}}]'
+        ws.send(auth_msg)
+
+    def on_error(self, ws, error):
+        print(f"WebSocket Error: {error}")
+
+    def on_close(self, ws, status_code, msg):
+        print("WebSocket Disconnected. Reconnecting...")
+        self.is_connected = False
+
+    def connect(self):
+        ws_url = "wss://ws2.quotex.io/socket.io/?EIO=3&transport=websocket"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Origin": "https://quotex.com"
+        }
+        self.ws = websocket.WebSocketApp(
+            ws_url,
+            header=headers,
+            on_open=self.on_open,
+            on_message=self.on_message,
+            on_error=self.on_error,
+            on_close=self.on_close
+        )
+        wst = threading.Thread(target=self.ws.run_forever)
+        wst.daemon = True
+        wst.start()
+
+# ==========================================
+# ৬. মেইন এক্সিকিউশন লুপ
+# ==========================================
+client = QuotexDirectClient(QUOTEX_SSID)
+client.connect()
+
+last_signal_time = 0
+
+print("Bot is running and waiting for market candles...")
 
 while True:
     try:
-        # লাইভ ক্যান্ডেল ডেটা নেওয়া
-        candles = client.get_candles(ASSET, TIMEFRAME, 10, time.time())
-        
-        if candles:
-            df = pd.DataFrame(candles)
-            df.rename(columns={
-                'open': 'Open',
-                'high': 'High',
-                'low': 'Low',
-                'close': 'Close',
-                'time': 'Time'
-            }, inplace=True)
+        if not client.is_connected:
+            time.sleep(2)
+            continue
 
-            current_candle_time = df['Time'].iloc[-1]
+        if len(client.candles_data) > 0:
+            df = pd.DataFrame(client.candles_data)
 
-            # নতুন ক্যান্ডেল ক্লোজ হলে এনালাইসিস করবে
-            if current_candle_time != last_candle_time:
-                last_candle_time = current_candle_time
-                
-                # সিগন্যাল এনালাইসিস (আপনার ৭টি স্ট্র্যাটেজি দিয়ে)
-                signal, strategy_name = run_all_strategies(df)
+            # ডেটাফ্রেম ফরম্যাটিং
+            rename_dict = {}
+            for col in df.columns:
+                if str(col).lower() in ['open', 'o']: rename_dict[col] = 'Open'
+                elif str(col).lower() in ['high', 'h']: rename_dict[col] = 'High'
+                elif str(col).lower() in ['low', 'l']: rename_dict[col] = 'Low'
+                elif str(col).lower() in ['close', 'c']: rename_dict[col] = 'Close'
+                elif str(col).lower() in ['time', 't']: rename_dict[col] = 'Time'
 
-                if signal:
-                    msg = (
-                        f"🚨 *QUOTEX LIVE SIGNAL* 🚨\n\n"
-                        f"📊 *Asset:* {ASSET}\n"
-                        f"🎯 *Signal:* {signal}\n"
-                        f"🛠️ *Strategy:* {strategy_name}\n"
-                        f"⏰ *Timeframe:* 1 Min"
-                    )
-                    send_telegram_signal(msg)
-                    print(f"New Signal: {signal} from {strategy_name}")
+            df.rename(columns=rename_dict, inplace=True)
+
+            required_cols = {'Open', 'High', 'Low', 'Close'}
+            if required_cols.issubset(df.columns):
+                current_time = df['Time'].iloc[-1] if 'Time' in df.columns else time.time()
+
+                if current_time != last_signal_time:
+                    signal, strategy_name = analyze_strategies(df)
+
+                    if signal:
+                        last_signal_time = current_time
+                        msg = (
+                            f"🚨 *QUOTEX DIRECT SIGNAL* 🚨\n\n"
+                            f"📊 *Asset:* {ASSET}\n"
+                            f"🎯 *Signal:* {signal}\n"
+                            f"🛠️ *Strategy:* {strategy_name}\n"
+                            f"⏰ *Timeframe:* 1 Min"
+                        )
+                        send_telegram_signal(msg)
+                        print(f"[{time.strftime('%H:%M:%S')}] Signal Sent: {signal} ({strategy_name})")
 
         time.sleep(5)
 
     except Exception as e:
-        print(f"Loop Error: {e}")
+        print(f"Main Loop Error: {e}")
         time.sleep(5)
+        
