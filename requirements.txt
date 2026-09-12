@@ -1,5 +1,4 @@
-pandas
 requests
+pandas
+quotexapi
 websocket-client
-python-dotenv
-python-telegram-bot
