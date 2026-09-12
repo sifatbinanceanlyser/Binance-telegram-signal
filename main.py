@@ -18,14 +18,13 @@ class WebServerHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"Quotex Trading Bot is Active & Running Live!")
 
     def log_message(self, format, *args):
-        return  # কনসোল লগ পরিষ্কার রাখার জন্য
+        return
 
 def run_http_server():
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(('0.0.0.0', port), WebServerHandler)
     server.serve_forever()
 
-# ব্যাকগ্রাউন্ড থ্রেডে সার্ভার স্টার্ট
 threading.Thread(target=run_http_server, daemon=True).start()
 print("=> Render Web Server Started Successfully.")
 
@@ -88,11 +87,12 @@ def analyze_strategies(df):
     return None, None
 
 # ==========================================
-# ৬. Quotex Direct WebSocket Client
+# ৬. Quotex Direct WebSocket Client (Fixed)
 # ==========================================
 class QuotexDirectClient:
-    def __init__(self, ssid):
+    def __init__(self, ssid, asset):
         self.ssid = ssid
+        self.asset = asset
         self.ws = None
         self.is_connected = False
         self.candles_data = []
@@ -107,18 +107,29 @@ class QuotexDirectClient:
                 data = json.loads(message[2:])
                 topic = data[0] if len(data) > 0 else ""
                 
-                if topic in ["candles", "history"]:
+                # ক্যান্ডেল হিস্ট্রি বা নতুন ক্যান্ডেল মেসেজ রিসিভ করা
+                if topic in ["candles", "history", "candles/update"]:
                     raw_candles = data[1]
                     if isinstance(raw_candles, list) and len(raw_candles) > 0:
                         self.candles_data = raw_candles
+                    elif isinstance(raw_candles, dict) and 'data' in raw_candles:
+                        self.candles_data = raw_candles['data']
             except Exception:
                 pass
 
     def on_open(self, ws):
         print("Connected directly to Quotex WebSocket!")
         self.is_connected = True
+        
+        # ১. অথেন্টিকেশন মেসেজ
         auth_msg = f'42["authorization", {{"session": "{self.ssid}"}}]'
         ws.send(auth_msg)
+        time.sleep(1)
+        
+        # ২. ক্যান্ডেল ডেটার জন্য নির্দিষ্ট অ্যাসেটে সাবস্ক্রাইব করা (Fixed)
+        sub_msg = f'42["candles/subscribe", {{"asset": "{self.asset}", "period": 60}}]'
+        ws.send(sub_msg)
+        print(f"=> Subscribed to 1-Min candles for {self.asset}")
 
     def on_error(self, ws, error):
         print(f"WebSocket Error: {error}")
@@ -146,9 +157,9 @@ class QuotexDirectClient:
         wst.start()
 
 # ==========================================
-# ৭. মূল এক্সিকিউশন লুপ
+# ৭. মূল এক্সিকিউশন লুপ (Fixed Data Mapping)
 # ==========================================
-client = QuotexDirectClient(QUOTEX_SSID)
+client = QuotexDirectClient(QUOTEX_SSID, ASSET)
 client.connect()
 
 last_signal_time = 0
@@ -164,13 +175,15 @@ while True:
         if len(client.candles_data) > 0:
             df = pd.DataFrame(client.candles_data)
 
+            # নিখুঁত কলাম ম্যাপিং
             rename_dict = {}
             for col in df.columns:
-                if str(col).lower() in ['open', 'o']: rename_dict[col] = 'Open'
-                elif str(col).lower() in ['high', 'h']: rename_dict[col] = 'Low' if 'High' in rename_dict.values() else 'High'
-                elif str(col).lower() in ['low', 'l']: rename_dict[col] = 'Low'
-                elif str(col).lower() in ['close', 'c']: rename_dict[col] = 'Close'
-                elif str(col).lower() in ['time', 't']: rename_dict[col] = 'Time'
+                c_str = str(col).lower()
+                if c_str in ['open', 'o']: rename_dict[col] = 'Open'
+                elif c_str in ['high', 'h']: rename_dict[col] = 'High'
+                elif c_str in ['low', 'l']: rename_dict[col] = 'Low'
+                elif c_str in ['close', 'c']: rename_dict[col] = 'Close'
+                elif c_str in ['time', 't', 'timestamp']: rename_dict[col] = 'Time'
 
             df.rename(columns=rename_dict, inplace=True)
 
@@ -180,6 +193,9 @@ while True:
 
                 if current_time != last_signal_time:
                     signal, strategy_name = analyze_strategies(df)
+                    
+                    # স্ক্যান লোগ
+                    print(f"[{time.strftime('%H:%M:%S')}] Candle Analyzed. Result: {signal if signal else 'No Pattern'}")
 
                     if signal:
                         last_signal_time = current_time
@@ -191,11 +207,11 @@ while True:
                             f"⏰ *Timeframe:* 1 Min"
                         )
                         send_telegram_signal(msg)
-                        print(f"[{time.strftime('%H:%M:%S')}] Signal Sent: {signal} ({strategy_name})")
+                        print(f"✅ [{time.strftime('%H:%M:%S')}] Signal Sent: {signal} ({strategy_name})")
 
         time.sleep(5)
 
     except Exception as e:
         print(f"Main Loop Error: {e}")
         time.sleep(5)
-                
+        
