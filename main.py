@@ -1,9 +1,8 @@
+import os
 import time
 import requests
 import pandas as pd
 from quotexapi.stable_api import Quotex
-
-
 
 # ==========================================
 # ১. স্ট্র্যাটেজি ফাইলগুলো ইমপোর্ট করা
@@ -22,13 +21,13 @@ ALL_STRATEGIES = [
 ]
 
 # ==========================================
-# ২. কনফিগারেশন (তোমার তথ্য দিয়ে পূরণ করো)
+# ২. কনফিগারেশন (সেশন টোকেন ও ক্রেডেনশিয়াল)
 # ==========================================
-QUOTEX_EMAIL = "sifat07071234@gmail.com"
-QUOTEX_PASSWORD = "Ammu0707"
+# সংগৃহীত SSID টোকেন
+QUOTEX_SSID = "eyJpd2lsIilJBYXJ6WDINb1p6L00ycTZ3cjgxS0E9PSIsInZhHVlljoiQ05mRE56TUl1aHVCN05yYm9VdXB1ck5xM2QvbHZOVDFDZkUvZTdyak1UZmNHVXpHYUhjWjdQnFWMm15iajlzRTIxWkdYb3JzS0ZTY2RwdjBVM2VVTJBFNGp4WGtucFBZMm1xcmTRncjNHM0IrajMwVIV3eXBzTWIFVS9BWUtNOHYiLCJtYWMiOiI4NjkwMDA3Yjc0ZjNiNTc3NjNmMJWJNjMwMzJjZTE2ZWxwZWU4MmVINzA3M2M2Y2YTI3OGY0ZjkzNGQ4ZTtk5liwidGfNljoiln0%3D"
 
-TELEGRAM_BOT_TOKEN = "8447772474:AAF_CwpS1e3clYMEkuN0VZ6UTFqzTsnK2KE"
-TELEGRAM_CHAT_ID = "6885238220"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8447772474:AAF_CwpS1e3clYMEkuN0VZ6UTFqzTsnK2KE")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "6885238220")
 
 ASSET = "EURUSD_fut"  # ট্রেড করার কারেন্সি পেয়ার
 TIMEFRAME = 60         # ১ মিনিটের ক্যান্ডেল
@@ -44,7 +43,7 @@ def send_telegram_signal(message):
         "parse_mode": "Markdown"
     }
     try:
-        requests.post(url, json=payload)
+        requests.post(url, json=payload, timeout=10)
     except Exception as e:
         print(f"Telegram Error: {e}")
 
@@ -53,22 +52,23 @@ def send_telegram_signal(message):
 # ==========================================
 def run_all_strategies(df):
     for st in ALL_STRATEGIES:
-        # তোমার ফাইলের সিগন্যাল ডিটেক্টর ফাংশন কল করা
         for func_name in ['detect_double_hammer_sell_signal', 'detect_signal']:
             if hasattr(st, func_name):
                 func = getattr(st, func_name)
-                res_df = func(df)
-                
-                if 'Signal' in res_df.columns:
-                    signal = res_df['Signal'].iloc[-1]
-                    if signal != 'HOLD':
-                        return signal, st.__name__
+                try:
+                    res_df = func(df)
+                    if res_df is not None and 'Signal' in res_df.columns:
+                        signal = res_df['Signal'].iloc[-1]
+                        if signal != 'HOLD':
+                            return signal, st.__name__
+                except Exception as e:
+                    print(f"Error in {st.__name__}: {e}")
     return None, None
 
 # ==========================================
 # ৫. কোটেক্স লাইভ কানেকশন ও লুপ
 # ==========================================
-client = Quotex(email=QUOTEX_EMAIL, password=QUOTEX_PASSWORD)
+client = Quotex(ssid=QUOTEX_SSID)
 check_connect, reason = client.connect()
 
 if not check_connect:
@@ -117,6 +117,6 @@ while True:
         time.sleep(5)
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Loop Error: {e}")
         time.sleep(5)
-        
+                
