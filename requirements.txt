@@ -1,4 +1,4 @@
 flask
 pandas
 requests
-git+https://github.com/carlos-m3/quotexpy.git
+quotexpy
