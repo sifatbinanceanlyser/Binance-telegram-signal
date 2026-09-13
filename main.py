@@ -5,7 +5,16 @@ import threading
 import pandas as pd
 import requests
 from flask import Flask
-from quotexpy import Client
+
+# ==================== DYNAMIC QUOTEX IMPORT ====================
+try:
+    from quotexpy import Quotex as Client
+except ImportError:
+    try:
+        from quotexpy import Client
+    except ImportError:
+        import quotexpy
+        Client = quotexpy.Quotex
 
 # ==================== IMPORTS FROM YOUR STRATEGY FILES ====================
 import Strategy1
@@ -137,4 +146,4 @@ if __name__ == "__main__":
     threading.Thread(target=start_async_loop, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-    
+        
