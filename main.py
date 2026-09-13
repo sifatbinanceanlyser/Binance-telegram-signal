@@ -40,21 +40,21 @@ def send_telegram_alert(pair, signal_type, strategy_name, entry_price):
         
     quotex_pair = f"{pair[:-4]}/{pair[-4:]}"
     
-    # Flexible Signal Checking (CALL / BUY vs PUT / SELL)
+    # Signal Direction Checking
     sig_upper = str(signal_type).upper()
     if any(x in sig_upper for x in ["CALL", "BUY", "UP"]):
-        emoji = "🟢 NEXT CANDLE: CALL (BUY)"
+        direction = "🟢 NEXT CANDLE: CALL (UP)"
     else:
-        emoji = "🔴 NEXT CANDLE: PUT (SELL)"
+        direction = "🔴 NEXT CANDLE: PUT (DOWN)"
     
     message = (
         f"🚨 *QUOTEX LIVE SIGNAL (BINANCE DATA)* 🚨\n\n"
         f"📌 *Pair:* `{quotex_pair}`\n"
-        f"📊 *Signal:* {emoji}\n"
+        f"📊 *Signal:* {direction}\n"
         f"🎯 *Strategy:* `{strategy_name}`\n"
         f"💵 *Current Price:* `{entry_price}`\n"
         f"⏱ *Timeframe:* M1 (1 Min)\n"
-        f"⏳ *Action:* Prepare trade for next candle (00s entry)!"
+        f"⏳ *Entry Time:* 00s of Next Candle!"
     )
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
@@ -139,18 +139,18 @@ def binance_signal_engine():
     while True:
         try:
             now = datetime.datetime.now()
-            # প্রতি মিনিটের ঠিক ৫৫তম সেকেন্ডে এনালাইসিস শুরু করবে
-            if now.second >= 55:
+            # ক্যান্ডেল শেষ হওয়ার ঠিক ২ সেকেন্ড আগে (৫৮তম সেকেন্ডে) এনালাইসিস চালু হবে
+            if now.second >= 58:
                 for pair in PAIRS:
                     df = get_binance_candles(pair, interval=TIMEFRAME, limit=50)
                     if df is not None:
                         run_custom_strategies(df, pair)
                 
-                # একই ক্যান্ডেলে বারবার নোটিফিকেশন এড়াতে ১০ সেকেন্ড পজ
-                time.sleep(10)
+                # একই ক্যান্ডেলে দুইবার এলার্ট না যাওয়ার জন্য ৫ সেকেন্ড পজ
+                time.sleep(5)
             else:
-                # ৫৫ সেকেন্ড না হওয়া পর্যন্ত প্রতি ০.৫ সেকেন্ড পর পর চেক করবে
-                time.sleep(0.5)
+                # ৫৮ সেকেন্ড হওয়া পর্যন্ত প্রতি ০.৩ সেকেন্ড পর পর স্ক্যান করবে
+                time.sleep(0.3)
         except Exception as e:
             print(f"Engine Loop Error: {e}")
             time.sleep(2)
@@ -159,4 +159,4 @@ if __name__ == "__main__":
     Thread(target=binance_signal_engine, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-            
+    
