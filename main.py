@@ -120,6 +120,20 @@ def run_custom_strategies(df, pair):
 # ==================== MAIN ANALYSIS LOOP ====================
 def binance_signal_engine():
     print("🚀 Binance Engine Active! Analyzing live candles and sending alerts...")
+    
+    # Startup Telegram Test Alert
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        try:
+            test_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            requests.post(test_url, json={
+                "chat_id": TELEGRAM_CHAT_ID, 
+                "text": "🤖 *Signal Engine Started!* Telegram connection active.", 
+                "parse_mode": "Markdown"
+            }, timeout=5)
+            print("✅ Startup test alert sent to Telegram.")
+        except Exception as e:
+            print(f"❌ Startup Telegram Alert Failed: {e}")
+
     while True:
         try:
             for pair in PAIRS:
@@ -136,4 +150,4 @@ if __name__ == "__main__":
     Thread(target=binance_signal_engine, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-            
+                                            
