@@ -1,27 +1,9 @@
 import os
 import time
-import asyncio
-import threading
-import pandas as pd
 import requests
+import pandas as pd
 from flask import Flask
-
-# ==================== DYNAMIC QUOTEX IMPORT FIX ====================
-import quotexpy
-
-# ডায়নামিকালি মডিউল থেকে সোর্স ক্লাস বের করার লজিক
-Client = getattr(quotexpy, 'Quotex', None) or \
-         getattr(quotexpy, 'Client', None) or \
-         getattr(quotexpy, 'QuotexPy', None)
-
-if Client is None and hasattr(quotexpy, 'quotexpy'):
-    sub_module = getattr(quotexpy, 'quotexpy')
-    Client = getattr(sub_module, 'Quotex', None) or \
-             getattr(sub_module, 'Client', None)
-
-if Client is None:
-    # যদি কোনো ক্লাসই না পাওয়া যায় তবে ইন্সট্যান্স ট্রাই করবে
-    Client = quotexpy
+from threading import Thread
 
 # ==================== IMPORTS FROM YOUR STRATEGY FILES ====================
 import Strategy1
@@ -33,24 +15,21 @@ import Strategy6
 import Strategy7
 
 # ==================== ENVIRONMENT CONFIGURATION ====================
-EMAIL = os.getenv("QUOTEX_EMAIL", "")
-PASSWORD = os.getenv("QUOTEX_PASSWORD", "")
-
-LARAVEL_SESSION = os.getenv("LARAVEL_SESSION", "")
-CF_CLEARANCE = os.getenv("CF_CLEARANCE", "")
-CF_BM = os.getenv("CF_BM", "")
-
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-PAIRS = ["EURUSD_otc", "GBPUSD_otc", "USDJPY_otc", "AUDUSD_otc"]
-TIMEFRAME = 60  # 1 Minute Candles
+# Binance Public Pairs matching Quotex Real Crypto Candles
+PAIRS = [
+    "BTCUSDT", "ETHUSDT", "LTCUSDT", "XRPUSDT", "SOLUSDT",
+    "DOGEUSDT", "BNBUSDT", "ADAUSDT", "DOTUSDT", "TRXUSDT"
+]
+TIMEFRAME = "1m"  # 1 Minute Candles
 
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Quotex Multi-Strategy Engine Active & Running!"
+    return "Binance-Quotex Signal Engine Active & Running!"
 
 # ==================== TELEGRAM NOTIFIER ====================
 def send_telegram_alert(pair, signal_type, strategy_name, entry_price):
@@ -58,10 +37,12 @@ def send_telegram_alert(pair, signal_type, strategy_name, entry_price):
         print(f"[{strategy_name}] Signal: {signal_type} on {pair} at {entry_price}")
         return
         
+    quotex_pair = f"{pair[:-4]}/{pair[-4:]}"
     emoji = "🟢 CALL (BUY)" if signal_type in ["CALL", "BUY"] else "🔴 PUT (SELL)"
+    
     message = (
-        f"🚨 *QUOTEX LIVE SIGNAL* 🚨\n\n"
-        f"📌 *Pair:* `{pair}`\n"
+        f"🚨 *QUOTEX LIVE SIGNAL (PUBLIC BINANCE DATA)* 🚨\n\n"
+        f"📌 *Pair:* `{quotex_pair}`\n"
         f"📊 *Signal:* {emoji}\n"
         f"🎯 *Strategy:* `{strategy_name}`\n"
         f"💵 *Entry Price:* `{entry_price}`\n"
@@ -70,11 +51,34 @@ def send_telegram_alert(pair, signal_type, strategy_name, entry_price):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
         requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}, timeout=5)
-        print(f"✅ Alert sent for {pair} -> {signal_type} ({strategy_name})")
+        print(f"✅ Alert sent for {quotex_pair} -> {signal_type} ({strategy_name})")
     except Exception as e:
         print(f"❌ Telegram Alert Error: {e}")
 
-# ==================== EXECUTE ALL 7 CUSTOM STRATEGIES ====================
+# ==================== PUBLIC BINANCE DATA FETCH ====================
+def get_binance_candles(symbol, interval="1m", limit=50):
+    # No API Key or Secret needed for this public endpoint
+    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+    try:
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            df = pd.DataFrame(data, columns=[
+                'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                'close_time', 'quote_asset_volume', 'number_of_trades',
+                'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
+            ])
+            df['open'] = df['open'].astype(float)
+            df['high'] = df['high'].astype(float)
+            df['low'] = df['low'].astype(float)
+            df['close'] = df['close'].astype(float)
+            df['volume'] = df['volume'].astype(float)
+            return df
+    except Exception as e:
+        print(f"Binance Public Data Error ({symbol}): {e}")
+    return None
+
+# ==================== EXECUTE STRATEGIES ====================
 def run_custom_strategies(df, pair):
     if df is None or len(df) < 10:
         return
@@ -104,57 +108,23 @@ def run_custom_strategies(df, pair):
         except Exception as e:
             print(f"Error running {name}: {e}")
 
-# ==================== WEBSOCKET ENGINE LOOP ====================
-async def run_quotex_engine():
-    print("Connecting to Quotex Engine...")
-    
-    # Client ইনিশিয়ালাইজেশন
-    try:
-        client = Client(email=EMAIL, password=PASSWORD)
-    except TypeError:
-        client = Client.Quotex(email=EMAIL, password=PASSWORD)
-
-    cookies_str = ""
-    if LARAVEL_SESSION:
-        cookies_str += f"laravel_session={LARAVEL_SESSION.strip()}; "
-    if CF_CLEARANCE:
-        cookies_str += f"cf_clearance={CF_CLEARANCE.strip()}; "
-    if CF_BM:
-        cookies_str += f"__cf_bm={CF_BM.strip()}; "
-
-    if cookies_str:
-        client.headers = {
-            "Cookie": cookies_str,
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        client.ssid = LARAVEL_SESSION.strip()
-
-    check_connect, reason = await client.connect()
-    if not check_connect:
-        print(f"❌ Connection Failed: {reason}")
-        return
-
-    print("🚀 Quotex Connected! Running your 7 strategy files live...")
-
+# ==================== MAIN ANALYSIS LOOP ====================
+def binance_signal_engine():
+    print("🚀 Binance Engine Active (No Keys Needed)! Analyzing markets...")
     while True:
         try:
             for pair in PAIRS:
-                candles = await client.get_candles(pair, time.time(), TIMEFRAME, 50)
-                if candles:
-                    df = pd.DataFrame(candles)
+                df = get_binance_candles(pair, interval=TIMEFRAME, limit=50)
+                if df is not None:
                     run_custom_strategies(df, pair)
             
-            await asyncio.sleep(60)
+            time.sleep(10)
         except Exception as e:
-            print(f"Loop Error: {e}")
-            await asyncio.sleep(10)
-
-def start_async_loop():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(run_quotex_engine())
+            print(f"Engine Loop Error: {e}")
+            time.sleep(5)
 
 if __name__ == "__main__":
-    threading.Thread(target=start_async_loop, daemon=True).start()
+    Thread(target=binance_signal_engine, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+         
