@@ -6,15 +6,22 @@ import pandas as pd
 import requests
 from flask import Flask
 
-# ==================== DYNAMIC QUOTEX IMPORT ====================
-try:
-    from quotexpy import Quotex as Client
-except ImportError:
-    try:
-        from quotexpy import Client
-    except ImportError:
-        import quotexpy
-        Client = quotexpy.Quotex
+# ==================== DYNAMIC QUOTEX IMPORT FIX ====================
+import quotexpy
+
+# ডায়নামিকালি মডিউল থেকে সোর্স ক্লাস বের করার লজিক
+Client = getattr(quotexpy, 'Quotex', None) or \
+         getattr(quotexpy, 'Client', None) or \
+         getattr(quotexpy, 'QuotexPy', None)
+
+if Client is None and hasattr(quotexpy, 'quotexpy'):
+    sub_module = getattr(quotexpy, 'quotexpy')
+    Client = getattr(sub_module, 'Quotex', None) or \
+             getattr(sub_module, 'Client', None)
+
+if Client is None:
+    # যদি কোনো ক্লাসই না পাওয়া যায় তবে ইন্সট্যান্স ট্রাই করবে
+    Client = quotexpy
 
 # ==================== IMPORTS FROM YOUR STRATEGY FILES ====================
 import Strategy1
@@ -100,7 +107,12 @@ def run_custom_strategies(df, pair):
 # ==================== WEBSOCKET ENGINE LOOP ====================
 async def run_quotex_engine():
     print("Connecting to Quotex Engine...")
-    client = Client(email=EMAIL, password=PASSWORD)
+    
+    # Client ইনিশিয়ালাইজেশন
+    try:
+        client = Client(email=EMAIL, password=PASSWORD)
+    except TypeError:
+        client = Client.Quotex(email=EMAIL, password=PASSWORD)
 
     cookies_str = ""
     if LARAVEL_SESSION:
@@ -146,4 +158,3 @@ if __name__ == "__main__":
     threading.Thread(target=start_async_loop, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-        
