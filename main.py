@@ -38,10 +38,16 @@ def send_telegram_alert(pair, signal_type, strategy_name, entry_price):
         return
         
     quotex_pair = f"{pair[:-4]}/{pair[-4:]}"
-    emoji = "🟢 CALL (BUY)" if signal_type in ["CALL", "BUY"] else "🔴 PUT (SELL)"
+    
+    # Flexible Signal Checking (CALL / BUY vs PUT / SELL)
+    sig_upper = str(signal_type).upper()
+    if any(x in sig_upper for x in ["CALL", "BUY", "UP"]):
+        emoji = "🟢 CALL (BUY)"
+    else:
+        emoji = "🔴 PUT (SELL)"
     
     message = (
-        f"🚨 *QUOTEX LIVE SIGNAL (PUBLIC BINANCE DATA)* 🚨\n\n"
+        f"🚨 *QUOTEX LIVE SIGNAL (BINANCE DATA)* 🚨\n\n"
         f"📌 *Pair:* `{quotex_pair}`\n"
         f"📊 *Signal:* {emoji}\n"
         f"🎯 *Strategy:* `{strategy_name}`\n"
@@ -51,13 +57,12 @@ def send_telegram_alert(pair, signal_type, strategy_name, entry_price):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
         requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}, timeout=5)
-        print(f"✅ Alert sent for {quotex_pair} -> {signal_type} ({strategy_name})")
+        print(f"✅ Alert sent to Telegram for {quotex_pair} -> {signal_type} ({strategy_name})")
     except Exception as e:
         print(f"❌ Telegram Alert Error: {e}")
 
 # ==================== PUBLIC BINANCE DATA FETCH ====================
 def get_binance_candles(symbol, interval="1m", limit=50):
-    # No API Key or Secret needed for this public endpoint
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     try:
         response = requests.get(url, timeout=5)
@@ -103,14 +108,18 @@ def run_custom_strategies(df, pair):
                     signal = getattr(module, func_name)(df)
                     break
             
-            if signal in ["CALL", "PUT", "BUY", "SELL"]:
-                send_telegram_alert(pair, signal, name, curr_close)
+            # Check if signal is valid (Matches SURE SHOT, CALL, BUY, PUT, SELL, UP, DOWN)
+            if signal and isinstance(signal, str):
+                sig_clean = signal.upper()
+                if any(k in sig_clean for k in ["CALL", "BUY", "PUT", "SELL", "UP", "DOWN"]):
+                    if "HOLD" not in sig_clean and "NONE" not in sig_clean:
+                        send_telegram_alert(pair, signal, name, curr_close)
         except Exception as e:
             print(f"Error running {name}: {e}")
 
 # ==================== MAIN ANALYSIS LOOP ====================
 def binance_signal_engine():
-    print("🚀 Binance Engine Active (No Keys Needed)! Analyzing markets...")
+    print("🚀 Binance Engine Active! Analyzing live candles and sending alerts...")
     while True:
         try:
             for pair in PAIRS:
@@ -127,4 +136,4 @@ if __name__ == "__main__":
     Thread(target=binance_signal_engine, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-         
+    
