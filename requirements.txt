@@ -1,7 +1,4 @@
 flask
-gunicorn
-requests
 pandas
-ta
-python-telegram-bot
-quotexpy
+requests
+git+https://github.com/carlos-m3/quotexpy.git
