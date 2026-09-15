@@ -30,7 +30,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Binance-Quotex Signal Engine Active & Running!"
+    return "Binance-Quotex Signal Engine & Win/Loss Tracker Active!"
 
 # ==================== TELEGRAM NOTIFIER ====================
 def send_telegram_alert(pair, signal_type, strategy_name, entry_price):
@@ -63,6 +63,37 @@ def send_telegram_alert(pair, signal_type, strategy_name, entry_price):
     except Exception as e:
         print(f"❌ Telegram Alert Error: {e}")
 
+# ==================== WIN / LOSS TRACKER NOTIFIER ====================
+def send_result_alert(pair, strategy_name, direction_type, result, entry_price, exit_price):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print(f"[{strategy_name}] Result: {result} on {pair} (Entry: {entry_price}, Exit: {exit_price})")
+        return
+
+    quotex_pair = f"{pair[:-4]}/{pair[-4:]}"
+    
+    if result == "WIN":
+        result_msg = "✅ *RESULT: WIN (SURESHOT)* 🟢"
+    elif result == "LOSS":
+        result_msg = "❌ *RESULT: LOSS* 🔴"
+    else:
+        result_msg = "⚪ *RESULT: REFUND / DRAW* 🟡"
+
+    message = (
+        f"📊 *SIGNAL RESULT UPDATE* 📊\n\n"
+        f"📌 *Pair:* `{quotex_pair}`\n"
+        f"🎯 *Strategy:* `{strategy_name}`\n"
+        f"➡️ *Direction:* `{direction_type}`\n"
+        f"💵 *Entry Price:* `{entry_price}`\n"
+        f"🏁 *Exit Price:* `{exit_price}`\n\n"
+        f"{result_msg}"
+    )
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    try:
+        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}, timeout=5)
+        print(f"🎯 Result sent to Telegram for {quotex_pair} -> {result}")
+    except Exception as e:
+        print(f"❌ Telegram Result Error: {e}")
+
 # ==================== PUBLIC BINANCE DATA FETCH ====================
 def get_binance_candles(symbol, interval="1m", limit=50):
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
@@ -84,6 +115,37 @@ def get_binance_candles(symbol, interval="1m", limit=50):
     except Exception as e:
         print(f"Binance Public Data Error ({symbol}): {e}")
     return None
+
+# ==================== WIN / LOSS TRACKER LOGIC ====================
+def track_signal_result(pair, strategy_name, signal_type, entry_price):
+    # সিগন্যাল ক্যান্ডেল শেষ হওয়া এবং ট্রেড ক্যান্ডেল সম্পূর্ণ (১ মিনিট) শেষ হওয়ার জন্য ৬০ সেকেন্ড অপেক্ষা
+    time.sleep(62)
+    
+    df = get_binance_candles(pair, interval=TIMEFRAME, limit=2)
+    if df is not None and len(df) >= 1:
+        # ট্রেড ক্যান্ডেলের ক্লোজ প্রাইস চেক
+        exit_price = df.iloc[-1]['close']
+        sig_upper = str(signal_type).upper()
+        
+        is_call = any(x in sig_upper for x in ["CALL", "BUY", "UP"])
+        direction_str = "CALL (UP)" if is_call else "PUT (DOWN)"
+
+        if is_call:
+            if exit_price > entry_price:
+                result = "WIN"
+            elif exit_price < entry_price:
+                result = "LOSS"
+            else:
+                result = "DRAW"
+        else: # PUT Signal
+            if exit_price < entry_price:
+                result = "WIN"
+            elif exit_price > entry_price:
+                result = "LOSS"
+            else:
+                result = "DRAW"
+
+        send_result_alert(pair, strategy_name, direction_str, result, entry_price, exit_price)
 
 # ==================== EXECUTE STRATEGIES ====================
 def run_custom_strategies(df, pair):
@@ -110,12 +172,16 @@ def run_custom_strategies(df, pair):
                     signal = getattr(module, func_name)(df)
                     break
             
-            # Check if signal is valid (Matches SURE SHOT, CALL, BUY, PUT, SELL, UP, DOWN)
+            # Check if signal is valid
             if signal and isinstance(signal, str):
                 sig_clean = signal.upper()
                 if any(k in sig_clean for k in ["CALL", "BUY", "PUT", "SELL", "UP", "DOWN"]):
                     if "HOLD" not in sig_clean and "NONE" not in sig_clean:
+                        # ১. সিগন্যাল অ্যালার্ট পাঠানো
                         send_telegram_alert(pair, signal, name, curr_close)
+                        
+                        # ২. ট্র্যাকিং চালু করা (ব্যাকগ্রাউন্ড থ্রেডে, যাতে মেইন স্ক্যান স্লো না হয়)
+                        Thread(target=track_signal_result, args=(pair, name, signal, curr_close), daemon=True).start()
         except Exception as e:
             print(f"Error running {name}: {e}")
 
@@ -129,7 +195,7 @@ def binance_signal_engine():
             test_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
             requests.post(test_url, json={
                 "chat_id": TELEGRAM_CHAT_ID, 
-                "text": "🤖 *Signal Engine Started!* Telegram connection active.", 
+                "text": "🤖 *Signal Engine & Win/Loss Tracker Started!*", 
                 "parse_mode": "Markdown"
             }, timeout=5)
             print("✅ Startup test alert sent to Telegram.")
@@ -139,17 +205,14 @@ def binance_signal_engine():
     while True:
         try:
             now = datetime.datetime.now()
-            # ক্যান্ডেল শেষ হওয়ার ঠিক ২ সেকেন্ড আগে (৫৮তম সেকেন্ডে) এনালাইসিস চালু হবে
             if now.second >= 58:
                 for pair in PAIRS:
                     df = get_binance_candles(pair, interval=TIMEFRAME, limit=50)
                     if df is not None:
                         run_custom_strategies(df, pair)
                 
-                # একই ক্যান্ডেলে দুইবার এলার্ট না যাওয়ার জন্য ৫ সেকেন্ড পজ
                 time.sleep(5)
             else:
-                # ৫৮ সেকেন্ড হওয়া পর্যন্ত প্রতি ০.৩ সেকেন্ড পর পর স্ক্যান করবে
                 time.sleep(0.3)
         except Exception as e:
             print(f"Engine Loop Error: {e}")
@@ -159,4 +222,4 @@ if __name__ == "__main__":
     Thread(target=binance_signal_engine, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-    
+                                
